@@ -3239,17 +3239,17 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@materializeinc/sql-lexer@npm:^26.8.0":
-  version: 26.8.0
-  resolution: "@materializeinc/sql-lexer@npm:26.8.0"
-  checksum: 10c0/6c34ef1bd7e87a655e1a67ae620e362df3f788d0f4a173cc4a71f356300f6a9c2f71d705908dd70f089da08acbcf2e2a38a3729246ce649c9769c8260600ab95
+"@materializeinc/sql-lexer@npm:^26.13.0":
+  version: 26.13.0
+  resolution: "@materializeinc/sql-lexer@npm:26.13.0"
+  checksum: 10c0/fa5ef764b75bb53eee11ce7d0b969d98d2ac85e69f8b37e0ffa7058394c5b3005eddd624aaf2fc370e43b84c388a3e4aa59243e2fe448ab6719013f858893b36
   languageName: node
   linkType: hard
 
-"@materializeinc/sql-pretty@npm:^26.8.0":
-  version: 26.8.0
-  resolution: "@materializeinc/sql-pretty@npm:26.8.0"
-  checksum: 10c0/6f1edcc3f3f7c180f160196cbba9adaf0528855eac56bd24981ffe8e822e45f5c76a8eff8b67d67556993f87a6d01e3ddd574ff129ffd88d339342742409ee3e
+"@materializeinc/sql-pretty@npm:^26.13.0":
+  version: 26.13.0
+  resolution: "@materializeinc/sql-pretty@npm:26.13.0"
+  checksum: 10c0/49ad06dbd73c3dbc527404582a91bda6b4e444cfd1b42d7374535111ea7e4e7df34063f916da1758925aeb43c9260921a5c96d18ea11763d24ca3010401e9a7d
   languageName: node
   linkType: hard
 
@@ -10567,8 +10567,8 @@ __metadata:
     "@juggle/resize-observer": "npm:^3.4.0"
     "@lezer/common": "npm:^1.2.3"
     "@lezer/highlight": "npm:^1.0.0"
-    "@materializeinc/sql-lexer": "npm:^26.8.0"
-    "@materializeinc/sql-pretty": "npm:^26.8.0"
+    "@materializeinc/sql-lexer": "npm:^26.13.0"
+    "@materializeinc/sql-pretty": "npm:^26.13.0"
     "@playwright/test": "npm:^1.48.2"
     "@rehookify/datepicker": "npm:^6.6.7"
     "@segment/analytics-next": "npm:^1.75.0"
