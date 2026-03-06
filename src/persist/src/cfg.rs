@@ -22,6 +22,7 @@ use mz_postgres_client::PostgresClientKnobs;
 use mz_postgres_client::metrics::PostgresClientMetrics;
 
 use crate::azure::{AzureBlob, AzureBlobConfig};
+use crate::crypto::{BlobEncryptionConfig, EncryptedBlob};
 use crate::file::{FileBlob, FileBlobConfig};
 #[cfg(feature = "foundationdb")]
 use crate::foundationdb::{FdbConsensus, FdbConsensusConfig};
@@ -47,8 +48,8 @@ pub fn all_dyn_configs(configs: ConfigSet) -> ConfigSet {
 pub enum BlobConfig {
     /// Config for [FileBlob].
     File(FileBlobConfig),
-    /// Config for [S3Blob].
-    S3(S3BlobConfig),
+    /// Config for [S3Blob], with optional envelope encryption.
+    S3(S3BlobConfig, Option<BlobEncryptionConfig>),
     /// Config for [MemBlob], only available in testing to prevent
     /// footguns.
     Mem(bool),
@@ -78,7 +79,24 @@ impl BlobConfig {
     pub async fn open(self) -> Result<Arc<dyn Blob>, ExternalError> {
         match self {
             BlobConfig::File(config) => Ok(Arc::new(FileBlob::open(config).await?)),
-            BlobConfig::S3(config) => Ok(Arc::new(S3Blob::open(config).await?)),
+            BlobConfig::S3(config, encryption) => {
+                let blob: Arc<dyn Blob> = Arc::new(S3Blob::open(config).await?);
+                match encryption {
+                    None => Ok(blob),
+                    Some(enc_cfg) => {
+                        let kms_client = enc_cfg.build_kms_client().await?;
+                        Ok(Arc::new(
+                            EncryptedBlob::new(
+                                blob,
+                                kms_client,
+                                enc_cfg.kms_key_id,
+                                enc_cfg.dek_rotation_interval,
+                            )
+                            .await?,
+                        ))
+                    }
+                }
+            }
             BlobConfig::Azure(config) => Ok(Arc::new(AzureBlob::open(config).await?)),
             BlobConfig::Mem(tombstone) => {
                 Ok(Arc::new(MemBlob::open(MemBlobConfig::new(tombstone))))
@@ -131,6 +149,22 @@ impl BlobConfig {
                     )),
                 };
 
+                let kms_key_id = query_params.remove("kms_key_id").map(|x| x.into_owned());
+                let kms_region = query_params.remove("kms_region").map(|x| x.into_owned());
+                let dek_rotation_interval_secs = query_params
+                    .remove("dek_rotation_interval_secs")
+                    .and_then(|x| x.parse::<u64>().ok());
+
+                let encryption = kms_key_id.map(|key_id| BlobEncryptionConfig {
+                    kms_key_id: key_id,
+                    kms_region: kms_region.or_else(|| region.clone()),
+                    endpoint: endpoint.clone(),
+                    role_arn: role_arn.clone(),
+                    dek_rotation_interval: Duration::from_secs(
+                        dek_rotation_interval_secs.unwrap_or(300),
+                    ),
+                });
+
                 let config = S3BlobConfig::new(
                     bucket,
                     prefix,
@@ -144,7 +178,7 @@ impl BlobConfig {
                 )
                 .await?;
 
-                Ok(BlobConfig::S3(config))
+                Ok(BlobConfig::S3(config, encryption))
             }
             "mem" => {
                 if !cfg!(debug_assertions) {
