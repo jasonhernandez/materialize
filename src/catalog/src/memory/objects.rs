@@ -948,7 +948,7 @@ pub enum TableDataSource {
     },
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum DataSourceDesc {
     /// Receives data from an external system
     Ingestion {
@@ -993,6 +993,14 @@ pub enum DataSourceDesc {
         /// The cluster which this source is associated with.
         cluster_id: ClusterId,
     },
+    /// Exposes the contents of the catalog shard.
+    Catalog,
+}
+
+impl From<IntrospectionType> for DataSourceDesc {
+    fn from(typ: IntrospectionType) -> Self {
+        Self::Introspection(typ)
+    }
 }
 
 impl DataSourceDesc {
@@ -1018,7 +1026,8 @@ impl DataSourceDesc {
             },
             DataSourceDesc::Introspection(_)
             | DataSourceDesc::Webhook { .. }
-            | DataSourceDesc::Progress => (None, None),
+            | DataSourceDesc::Progress
+            | DataSourceDesc::Catalog => (None, None),
         }
     }
 
@@ -1065,7 +1074,8 @@ impl DataSourceDesc {
             }
             DataSourceDesc::Introspection(_)
             | DataSourceDesc::Webhook { .. }
-            | DataSourceDesc::Progress => None,
+            | DataSourceDesc::Progress
+            | DataSourceDesc::Catalog => None,
         }
     }
 }
@@ -1194,7 +1204,7 @@ impl Source {
             | DataSourceDesc::OldSyntaxIngestion { desc, .. } => desc.connection.name(),
             DataSourceDesc::Progress => "progress",
             DataSourceDesc::IngestionExport { .. } => "subsource",
-            DataSourceDesc::Introspection(_) => "source",
+            DataSourceDesc::Introspection(_) | DataSourceDesc::Catalog => "source",
             DataSourceDesc::Webhook { .. } => "webhook",
         }
     }
@@ -1207,7 +1217,8 @@ impl Source {
             DataSourceDesc::IngestionExport { .. }
             | DataSourceDesc::Introspection(_)
             | DataSourceDesc::Webhook { .. }
-            | DataSourceDesc::Progress => None,
+            | DataSourceDesc::Progress
+            | DataSourceDesc::Catalog => None,
         }
     }
 
@@ -1251,9 +1262,11 @@ impl Source {
             //  use a data shard.
             DataSourceDesc::IngestionExport { .. } => 1,
             DataSourceDesc::Webhook { .. } => 1,
-            // Introspection and progress subsources are not under the user's control, so shouldn't
-            // count toward their quota.
-            DataSourceDesc::Introspection(_) | DataSourceDesc::Progress => 0,
+            // Introspection, catalog, and progress subsources are not under the user's control, so
+            // shouldn't count toward their quota.
+            DataSourceDesc::Introspection(_)
+            | DataSourceDesc::Progress
+            | DataSourceDesc::Catalog => 0,
         }
     }
 }
@@ -1397,6 +1410,8 @@ pub struct MaterializedView {
     pub replacement_target: Option<CatalogItemId>,
     /// Cluster that this materialized view runs on.
     pub cluster_id: ClusterId,
+    /// If set, only install this materialized view's dataflow on the specified replica.
+    pub target_replica: Option<ReplicaId>,
     /// Column indexes that we assert are not `NULL`.
     ///
     /// TODO(parkmycar): Switch this to use the `ColumnIdx` type.
@@ -1476,6 +1491,7 @@ impl MaterializedView {
             columns: rpl_stmt.columns,
             replacement_for: None,
             in_cluster: rpl_stmt.in_cluster,
+            in_cluster_replica: rpl_stmt.in_cluster_replica,
             query: rpl_stmt.query,
             as_of: rpl_stmt.as_of,
             with_options: rpl_stmt.with_options,
@@ -1505,6 +1521,7 @@ impl MaterializedView {
             dependencies,
             replacement_target: None,
             cluster_id: replacement.cluster_id,
+            target_replica: replacement.target_replica,
             non_null_assertions: replacement.non_null_assertions,
             custom_logical_compaction_window: replacement.custom_logical_compaction_window,
             refresh_schedule: replacement.refresh_schedule,
@@ -1824,7 +1841,8 @@ impl CatalogItem {
                 DataSourceDesc::IngestionExport { .. }
                 | DataSourceDesc::Introspection(_)
                 | DataSourceDesc::Webhook { .. }
-                | DataSourceDesc::Progress => Ok(None),
+                | DataSourceDesc::Progress
+                | DataSourceDesc::Catalog => Ok(None),
             },
             _ => Err(SqlCatalogError::UnexpectedType {
                 name: entry.name().item.to_string(),
@@ -2382,7 +2400,9 @@ impl CatalogItem {
                 // cross-referencing the items
                 DataSourceDesc::IngestionExport { .. } => None,
                 DataSourceDesc::Webhook { cluster_id, .. } => Some(*cluster_id),
-                DataSourceDesc::Introspection(_) | DataSourceDesc::Progress => None,
+                DataSourceDesc::Introspection(_)
+                | DataSourceDesc::Progress
+                | DataSourceDesc::Catalog => None,
             },
             CatalogItem::Sink(sink) => Some(sink.cluster_id),
             CatalogItem::ContinualTask(ct) => Some(ct.cluster_id),
@@ -2796,7 +2816,8 @@ impl CatalogEntry {
                 DataSourceDesc::IngestionExport { .. }
                 | DataSourceDesc::Introspection(_)
                 | DataSourceDesc::Progress
-                | DataSourceDesc::Webhook { .. } => None,
+                | DataSourceDesc::Webhook { .. }
+                | DataSourceDesc::Catalog => None,
             },
             CatalogItem::Table(_)
             | CatalogItem::Log(_)

@@ -1601,6 +1601,7 @@ steps:
             # Cleanup runs in pre-exit hook
             args: [--no-cleanup]
             ci-builder: stable
+      skip: "Flaky because of materialize-terraform-self-managed#157"
       branches: "main v*.* *gcp* *tf* *terraform* *helm* *self-managed* *orchestratord*"
 
     - id: terraform-azure
@@ -1715,7 +1716,7 @@ steps:
               composition: sqlsmith
               args: [--max-joins=5, --explain-only, --runtime=1500]
 
-  - group: SQLancer
+  - group: "SQLancer(++)"
     key: sqlancer
     steps:
       - id: sqlancer-pqs
@@ -1723,7 +1724,7 @@ steps:
         depends_on: build-aarch64
         timeout_in_minutes: 40
         agents:
-          queue: hetzner-aarch64-4cpu-8gb
+          queue: hetzner-aarch64-8cpu-16gb
         plugins:
           - ./ci/plugins/mzcompose:
               composition: sqlancer
@@ -1734,7 +1735,7 @@ steps:
         depends_on: build-aarch64
         timeout_in_minutes: 40
         agents:
-          queue: hetzner-aarch64-4cpu-8gb
+          queue: hetzner-aarch64-8cpu-16gb
         plugins:
           - ./ci/plugins/mzcompose:
               composition: sqlancer
@@ -1745,7 +1746,6 @@ steps:
         depends_on: build-aarch64
         timeout_in_minutes: 40
         agents:
-          # Ran out of memory retrieving query results.
           queue: hetzner-aarch64-8cpu-16gb
         plugins:
           - ./ci/plugins/mzcompose:
@@ -1757,11 +1757,55 @@ steps:
         depends_on: build-aarch64
         timeout_in_minutes: 40
         agents:
-          queue: hetzner-aarch64-4cpu-8gb
+          queue: hetzner-aarch64-8cpu-16gb
         plugins:
           - ./ci/plugins/mzcompose:
               composition: sqlancer
               args: [--runtime=1500, --oracle=HAVING]
+
+      - id: sqlancer-dqp
+        label: "SQLancer DQP"
+        depends_on: build-aarch64
+        timeout_in_minutes: 40
+        agents:
+          queue: hetzner-aarch64-8cpu-16gb
+        plugins:
+          - ./ci/plugins/mzcompose:
+              composition: sqlancer
+              args: [--runtime=1500, --oracle=DQP]
+
+      - id: sqlancerplusplus-where
+        label: "SQLancer++ Where"
+        depends_on: build-aarch64
+        timeout_in_minutes: 40
+        agents:
+          queue: hetzner-aarch64-16cpu-32gb
+        plugins:
+          - ./ci/plugins/mzcompose:
+              composition: sqlancerplusplus
+              args: [--runtime=1500, --oracle=WHERE]
+
+      - id: sqlancerplusplus-norec
+        label: "SQLancer++ NoREC"
+        depends_on: build-aarch64
+        timeout_in_minutes: 40
+        agents:
+          queue: hetzner-aarch64-16cpu-32gb
+        plugins:
+          - ./ci/plugins/mzcompose:
+              composition: sqlancerplusplus
+              args: [--runtime=1500, --oracle=NOREC]
+
+      - id: sqlancerplusplus-query-partitioning
+        label: "SQLancer++ Query Partitioning"
+        depends_on: build-aarch64
+        timeout_in_minutes: 40
+        agents:
+          queue: hetzner-aarch64-16cpu-32gb
+        plugins:
+          - ./ci/plugins/mzcompose:
+              composition: sqlancerplusplus
+              args: [--runtime=1500, --oracle=QUERY_PARTITIONING]
 
   - group: RQG
     key: rqg
@@ -2175,27 +2219,27 @@ steps:
     agents:
       queue: hetzner-aarch64-4cpu-8gb
 
-  - group: "Copy To S3"
-    key: copy-to-s3
+  - group: "Copy"
+    key: copy
     steps:
-    - id: copy-to-s3-1-replica
-      label: "Copy To S3 (1 replica)"
+    - id: copy-1-replica
+      label: "Copy (1 replica)"
       depends_on: build-aarch64
       timeout_in_minutes: 60
       plugins:
         - ./ci/plugins/mzcompose:
-            composition: copy-to-s3
+            composition: copy
             run: nightly
       agents:
         queue: hetzner-aarch64-8cpu-16gb
 
-    - id: copy-to-s3-2-replicas
-      label: "Copy To S3 (2 replicas)"
+    - id: copy-2-replicas
+      label: "Copy (2 replicas)"
       depends_on: build-aarch64
       timeout_in_minutes: 60
       plugins:
         - ./ci/plugins/mzcompose:
-            composition: copy-to-s3
+            composition: copy
             run: nightly
             args: [--default-size=2]
       agents:

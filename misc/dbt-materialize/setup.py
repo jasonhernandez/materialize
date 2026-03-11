@@ -15,10 +15,9 @@
 # limitations under the License.
 
 import os
-from distutils.core import setup
 from pathlib import Path
 
-from setuptools import find_packages
+from setuptools import find_packages, setup
 
 README = Path(__file__).parent / "README.md"
 
@@ -33,7 +32,7 @@ setup(
     # This adapter's minor version should match the required dbt-postgres version,
     # but patch versions may differ.
     # If you bump this version, bump it in __version__.py too.
-    version="1.9.5",
+    version="1.9.6",
     description="The Materialize adapter plugin for dbt.",
     long_description=(Path(__file__).parent / "README.md").open().read(),
     long_description_content_type="text/markdown",

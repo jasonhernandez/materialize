@@ -252,7 +252,7 @@ fn plan_alter_network_policy_owner(
     match resolve_network_policy(scx, name.clone(), if_exists)? {
         Some(policy_id) => Ok(Plan::AlterOwner(AlterOwnerPlan {
             id: ObjectId::NetworkPolicy(policy_id.id),
-            object_type: ObjectType::Schema,
+            object_type: ObjectType::NetworkPolicy,
             new_owner,
         })),
         None => {
@@ -805,6 +805,12 @@ pub fn plan_reassign_owned(
     for database in scx.catalog.get_databases() {
         if old_roles.contains(&database.owner_id()) {
             reassign_ids.push(database.id().into());
+        }
+    }
+    // Network policies
+    for network_policy in scx.catalog.get_network_policies() {
+        if old_roles.contains(&network_policy.owner_id()) {
+            reassign_ids.push(ObjectId::NetworkPolicy(network_policy.id()));
         }
     }
 

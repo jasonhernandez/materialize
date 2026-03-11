@@ -12,8 +12,6 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use itertools::{Either, Itertools};
-use mz_adapter_types::dyncfgs::CONSTRAINT_BASED_TIMESTAMP_SELECTION;
-use mz_adapter_types::timestamp_selection::ConstraintBasedTimestampSelection;
 use mz_compute_types::ComputeInstanceId;
 use mz_controller_types::ClusterId;
 use mz_expr::{CollectionPlan, ResultSpec};
@@ -38,7 +36,7 @@ use opentelemetry::trace::TraceContextExt;
 use tracing::{Span, debug, warn};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-use crate::catalog::{Catalog, CatalogState};
+use crate::catalog::Catalog;
 use crate::command::Command;
 use crate::coord::peek::{FastPathPlan, PeekPlan};
 use crate::coord::sequencer::{eval_copy_to_uri, statistics_oracle};
@@ -703,7 +701,6 @@ impl PeekClient {
                 };
                 let (determination, read_holds) = self
                     .frontend_determine_timestamp(
-                        catalog.state(),
                         session,
                         determine_bundle,
                         &select_plan.when,
@@ -740,8 +737,9 @@ impl PeekClient {
                     .contains(&id);
                 soft_assert_or_log!(
                     s || c,
-                    "missing read hold for collection {} in `input_id_bundle",
-                    id
+                    "missing read hold for collection {} in `input_id_bundle`; (in_immediate_multi_stmt_txn: {})",
+                    id,
+                    in_immediate_multi_stmt_txn,
                 );
             }
 
@@ -750,8 +748,9 @@ impl PeekClient {
             for id in input_id_bundle.storage_ids.iter() {
                 soft_assert_or_log!(
                     read_holds.storage_holds.contains_key(id),
-                    "missing storage read hold for collection {} in `input_id_bundle",
-                    id
+                    "missing storage read hold for collection {} in `input_id_bundle`; (in_immediate_multi_stmt_txn: {})",
+                    id,
+                    in_immediate_multi_stmt_txn,
                 );
             }
             for id in input_id_bundle
@@ -764,8 +763,9 @@ impl PeekClient {
                         .compute_ids()
                         .map(|(_instance, coll)| coll)
                         .contains(id),
-                    "missing compute read hold for collection {} in `input_id_bundle",
+                    "missing compute read hold for collection {} in `input_id_bundle`; (in_immediate_multi_stmt_txn: {})",
                     id,
+                    in_immediate_multi_stmt_txn,
                 );
             }
         }
@@ -1073,6 +1073,7 @@ impl PeekClient {
             &optimization_result,
             &determination,
             target_cluster_id,
+            in_immediate_multi_stmt_txn,
         );
 
         // Handle the optimization result: either generate EXPLAIN output or continue with execution
@@ -1358,7 +1359,6 @@ impl PeekClient {
     /// Note: self is taken &mut because of the lazy fetching in `get_compute_instance_client`.
     pub(crate) async fn frontend_determine_timestamp(
         &mut self,
-        catalog_state: &CatalogState,
         session: &Session,
         id_bundle: &CollectionIdBundle,
         when: &QueryWhen,
@@ -1368,10 +1368,6 @@ impl PeekClient {
         real_time_recency_ts: Option<Timestamp>,
     ) -> Result<(TimestampDetermination<Timestamp>, ReadHolds<Timestamp>), AdapterError> {
         // this is copy-pasted from Coordinator
-
-        let constraint_based = ConstraintBasedTimestampSelection::from_str(
-            &CONSTRAINT_BASED_TIMESTAMP_SELECTION.get(catalog_state.system_config().dyncfgs()),
-        );
 
         let isolation_level = session.vars().transaction_isolation();
 
@@ -1388,12 +1384,10 @@ impl PeekClient {
             session,
             id_bundle,
             when,
-            compute_instance,
             timeline_context,
             oracle_read_ts,
             real_time_recency_ts,
             isolation_level,
-            &constraint_based,
             read_holds,
             upper.clone(),
         )?;
@@ -1407,7 +1401,6 @@ impl PeekClient {
                 },
                 isolation_level.as_str(),
                 &compute_instance.to_string(),
-                constraint_based.as_str(),
             ])
             .inc();
         if !det.respond_immediately()
@@ -1421,22 +1414,19 @@ impl PeekClient {
                         session,
                         id_bundle,
                         when,
-                        compute_instance,
                         timeline_context,
                         oracle_read_ts,
                         real_time_recency_ts,
-                        isolation_level,
-                        &constraint_based,
+                        &IsolationLevel::Serializable,
                         read_holds.clone(),
                         upper,
                     )?;
                 if let Some(serializable) = serializable_det.timestamp_context.timestamp() {
                     session
                         .metrics()
-                        .timestamp_difference_for_strict_serializable_ms(&[
-                            compute_instance.to_string().as_ref(),
-                            constraint_based.as_str(),
-                        ])
+                        .timestamp_difference_for_strict_serializable_ms(&[compute_instance
+                            .to_string()
+                            .as_ref()])
                         .observe(f64::cast_lossy(u64::from(
                             strict.saturating_sub(*serializable),
                         )));
@@ -1452,6 +1442,7 @@ impl PeekClient {
         execution: &Execution,
         determination: &TimestampDetermination<Timestamp>,
         target_cluster_id: ClusterId,
+        in_immediate_multi_stmt_txn: bool,
     ) {
         // Extract source_imports, index_imports, as_of, and execution_name based on Execution variant
         let (source_imports, index_imports, as_of, execution_name): (
@@ -1517,9 +1508,10 @@ impl PeekClient {
         for id in source_imports.iter() {
             soft_assert_or_log!(
                 read_holds.storage_holds.contains_key(id),
-                "[{}] missing read hold for the source import {}",
+                "[{}] missing read hold for the source import {}; (in_immediate_multi_stmt_txn: {})",
                 execution_name,
-                id
+                id,
+                in_immediate_multi_stmt_txn,
             );
         }
         for id in index_imports.iter() {
@@ -1528,9 +1520,10 @@ impl PeekClient {
                     .compute_ids()
                     .map(|(_instance, coll)| coll)
                     .contains(id),
-                "[{}] missing read hold for the index import {}",
+                "[{}] missing read hold for the index import {}; (in_immediate_multi_stmt_txn: {})",
                 execution_name,
                 id,
+                in_immediate_multi_stmt_txn,
             );
         }
 
@@ -1538,30 +1531,33 @@ impl PeekClient {
         for (id, h) in read_holds.storage_holds.iter() {
             soft_assert_or_log!(
                 h.since().less_equal(&as_of),
-                "[{}] storage read hold at {:?} for collection {} is not enough for as_of {:?}, determination: {:?}",
+                "[{}] storage read hold at {:?} for collection {} is not enough for as_of {:?}, determination: {:?}; (in_immediate_multi_stmt_txn: {})",
                 execution_name,
                 h.since(),
                 id,
                 as_of,
-                determination
+                determination,
+                in_immediate_multi_stmt_txn,
             );
         }
         for ((instance, id), h) in read_holds.compute_holds.iter() {
             soft_assert_eq_or_log!(
                 *instance,
                 target_cluster_id,
-                "[{}] the read hold on {} is on the wrong cluster",
+                "[{}] the read hold on {} is on the wrong cluster; (in_immediate_multi_stmt_txn: {})",
                 execution_name,
-                id
+                id,
+                in_immediate_multi_stmt_txn,
             );
             soft_assert_or_log!(
                 h.since().less_equal(&as_of),
-                "[{}] compute read hold at {:?} for collection {} is not enough for as_of {:?}, determination: {:?}",
+                "[{}] compute read hold at {:?} for collection {} is not enough for as_of {:?}, determination: {:?}; (in_immediate_multi_stmt_txn: {})",
                 execution_name,
                 h.since(),
                 id,
                 as_of,
-                determination
+                determination,
+                in_immediate_multi_stmt_txn,
             );
         }
     }

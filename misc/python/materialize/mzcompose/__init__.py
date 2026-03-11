@@ -64,14 +64,14 @@ def get_minimal_system_parameters(
         # -----
         # Others (ordered by name)
         "allow_real_time_recency": "true",
-        "constraint_based_timestamp_selection": "verify",
+        "constraint_based_timestamp_selection": "verify",  # removed from main, keeping it here for old versions
         "enable_compute_peek_response_stash": "true",
         "enable_0dt_deployment_panic_after_timeout": "true",
         "enable_0dt_deployment_sources": (
             "true" if version >= MzVersion.parse_mz("v0.132.0-dev") else "false"
         ),
         "enable_alter_swap": "true",
-        "enable_cast_elimination": "false",
+        "enable_cast_elimination": "true",
         "enable_columnar_lgalloc": "false",
         "enable_columnation_lgalloc": "false",
         "enable_compute_correction_v2": "true",
@@ -81,6 +81,7 @@ def get_minimal_system_parameters(
         "enable_continual_task_retain": "true",
         "enable_continual_task_transform": "true",
         "enable_copy_to_expr": "true",
+        "enable_copy_from_remote": "true",
         "enable_create_table_from_source": "true",
         "enable_eager_delta_joins": "true",
         "enable_envelope_debezium_in_subscribe": "true",
@@ -187,7 +188,7 @@ def get_variable_system_parameters(
         ),
         VariableSystemParameter(
             "enable_cast_elimination",
-            "false",
+            "true",
             ["true", "false"],
         ),
         VariableSystemParameter(
@@ -474,6 +475,7 @@ UNINTERESTING_SYSTEM_PARAMETERS = [
     "copy_to_s3_parquet_row_group_file_ratio",
     "copy_to_s3_arrow_builder_buffer_ratio",
     "copy_to_s3_multipart_part_size_bytes",
+    "enable_replica_targeted_materialized_views",
     "enable_compute_replica_expiration",
     "enable_compute_render_fueled_as_specific_collection",
     "compute_logical_backpressure_max_retained_capabilities",
@@ -611,6 +613,8 @@ UNINTERESTING_SYSTEM_PARAMETERS = [
     "oidc_issuer",
     "oidc_audience",
     "oidc_authentication_claim",
+    "enable_mcp_agents",
+    "enable_mcp_observatory",
 ]
 
 

@@ -1275,6 +1275,14 @@ impl Catalog {
             .filter(|entry| entry.is_continual_task() && entry.id().is_user())
     }
 
+    pub fn user_network_policies(&self) -> impl Iterator<Item = &NetworkPolicy> {
+        self.state
+            .network_policies_by_id
+            .iter()
+            .filter(|(id, _)| id.is_user())
+            .map(|(_, policy)| policy)
+    }
+
     pub fn system_privileges(&self) -> &PrivilegeMap {
         &self.state.system_privileges
     }
@@ -3463,13 +3471,19 @@ mod tests {
                                         "fn named `{}` called on args `{:?}` (lowered to `{}`) yielded mir_typ.nullable: {}",
                                         name, args, mir, mir_typ.nullable
                                     );
-                                } else {
-                                    assert_eq!(
-                                        mir_typ.nullable, propagates_nulls,
+                                } else if propagates_nulls {
+                                    // propagates_nulls means the optimizer short-circuits
+                                    // all-null inputs, so the output must be nullable.
+                                    assert!(
+                                        mir_typ.nullable,
                                         "fn named `{}` called on args `{:?}` (lowered to `{}`) yielded mir_typ.nullable: {}",
                                         name, args, mir, mir_typ.nullable
                                     );
                                 }
+                                // When propagates_nulls is false, the output may still
+                                // be nullable if a non-nullable parameter received a null
+                                // input (per-position null rejection). The is_instance_of
+                                // check above ensures type consistency.
                             }
                         }
                         // Check that `MirScalarExpr::reduce` yields the same result

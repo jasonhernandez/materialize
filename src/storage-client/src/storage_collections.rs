@@ -12,6 +12,7 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
+use std::iter;
 use std::num::NonZeroI64;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -29,7 +30,7 @@ use mz_ore::task::AbortOnDropHandle;
 use mz_ore::{assert_none, instrument, soft_assert_or_log};
 use mz_persist_client::cache::PersistClientCache;
 use mz_persist_client::cfg::USE_CRITICAL_SINCE_SNAPSHOT;
-use mz_persist_client::critical::SinceHandle;
+use mz_persist_client::critical::{Opaque, SinceHandle};
 use mz_persist_client::read::{Cursor, ReadHandle};
 use mz_persist_client::schema::CaESchema;
 use mz_persist_client::stats::{SnapshotPartsStats, SnapshotStats};
@@ -480,13 +481,14 @@ where
 
         // We have to initialize, so that TxnsRead::start() below does not
         // block.
-        let _txns_handle: TxnsHandle<SourceData, (), T, StorageDiff, PersistEpoch, TxnsCodecRow> =
+        let _txns_handle: TxnsHandle<SourceData, (), T, StorageDiff, TxnsCodecRow> =
             TxnsHandle::open(
                 T::minimum(),
                 txns_client.clone(),
                 txns_client.dyncfgs().clone(),
                 Arc::clone(&txns_metrics),
                 txns_id,
+                Opaque::encode(&PersistEpoch::default()),
             )
             .await;
 
@@ -673,7 +675,7 @@ where
         shard: ShardId,
         since: Option<&Antichain<T>>,
         persist_client: &PersistClient,
-    ) -> SinceHandle<SourceData, (), T, StorageDiff, PersistEpoch> {
+    ) -> SinceHandle<SourceData, (), T, StorageDiff> {
         tracing::debug!(%id, ?since, "opening critical handle");
 
         assert!(
@@ -691,10 +693,11 @@ where
         let since_handle = {
             // This block's aim is to ensure the handle is in terms of our epoch
             // by the time we return it.
-            let mut handle: SinceHandle<_, _, _, _, PersistEpoch> = persist_client
+            let mut handle = persist_client
                 .open_critical_since(
                     shard,
                     PersistClient::CONTROLLER_CRITICAL_SINCE,
+                    Opaque::encode(&PersistEpoch::default()),
                     diagnostics.clone(),
                 )
                 .await
@@ -712,7 +715,7 @@ where
             let our_epoch = self.envd_epoch;
 
             loop {
-                let current_epoch: PersistEpoch = handle.opaque().clone();
+                let current_epoch: PersistEpoch = handle.opaque().decode();
 
                 // Ensure the current epoch is <= our epoch.
                 let unchecked_success = current_epoch.0.map(|e| e <= our_epoch).unwrap_or(true);
@@ -722,8 +725,8 @@ where
                     // epoch.
                     let checked_success = handle
                         .compare_and_downgrade_since(
-                            &current_epoch,
-                            (&PersistEpoch::from(our_epoch), &since),
+                            &Opaque::encode(&current_epoch),
+                            (&Opaque::encode(&PersistEpoch::from(our_epoch)), &since),
                         )
                         .await
                         .is_ok();
@@ -2442,7 +2445,7 @@ enum SinceHandleWrapper<T>
 where
     T: TimelyTimestamp + Lattice + Codec64,
 {
-    Critical(SinceHandle<SourceData, (), T, StorageDiff, PersistEpoch>),
+    Critical(SinceHandle<SourceData, (), T, StorageDiff>),
     Leased(ReadHandle<SourceData, (), T, StorageDiff>),
 }
 
@@ -2459,7 +2462,7 @@ where
 
     pub fn opaque(&self) -> PersistEpoch {
         match self {
-            Self::Critical(handle) => handle.opaque().clone(),
+            Self::Critical(handle) => handle.opaque().decode(),
             Self::Leased(_handle) => {
                 // The opaque is expected to be used with
                 // `compare_and_downgrade_since`, and the leased handle doesn't
@@ -2473,12 +2476,17 @@ where
     pub async fn compare_and_downgrade_since(
         &mut self,
         expected: &PersistEpoch,
-        new: (&PersistEpoch, &Antichain<T>),
+        (opaque, since): (&PersistEpoch, &Antichain<T>),
     ) -> Result<Antichain<T>, PersistEpoch> {
         match self {
-            Self::Critical(handle) => handle.compare_and_downgrade_since(expected, new).await,
+            Self::Critical(handle) => handle
+                .compare_and_downgrade_since(
+                    &Opaque::encode(expected),
+                    (&Opaque::encode(opaque), since),
+                )
+                .await
+                .map_err(|e| e.decode()),
             Self::Leased(handle) => {
-                let (opaque, since) = new;
                 assert_none!(opaque.0);
 
                 handle.downgrade_since(since).await;
@@ -2491,16 +2499,17 @@ where
     pub async fn maybe_compare_and_downgrade_since(
         &mut self,
         expected: &PersistEpoch,
-        new: (&PersistEpoch, &Antichain<T>),
+        (opaque, since): (&PersistEpoch, &Antichain<T>),
     ) -> Option<Result<Antichain<T>, PersistEpoch>> {
         match self {
-            Self::Critical(handle) => {
-                handle
-                    .maybe_compare_and_downgrade_since(expected, new)
-                    .await
-            }
+            Self::Critical(handle) => handle
+                .maybe_compare_and_downgrade_since(
+                    &Opaque::encode(expected),
+                    (&Opaque::encode(opaque), since),
+                )
+                .await
+                .map(|r| r.map_err(|o| o.decode())),
             Self::Leased(handle) => {
-                let (opaque, since) = new;
                 assert_none!(opaque.0);
 
                 handle.maybe_downgrade_since(since).await;
@@ -2760,68 +2769,87 @@ where
                     }
                 }
                 cmd = self.cmds_rx.recv() => {
-                    let cmd = if let Some(cmd) = cmd {
-                        cmd
-                    } else {
+                    let Some(cmd) = cmd else {
                         // We're done!
                         break;
                     };
 
-                    match cmd {
-                        BackgroundCmd::Register{ id, is_in_txns, write_handle, since_handle } => {
-                            debug!("registering handles for {}", id);
-                            let previous = self.shard_by_id.insert(id, write_handle.shard_id());
-                            if previous.is_some() {
-                                panic!("already registered a WriteHandle for collection {id}");
-                            }
+                    // Drain all commands so we can merge `DowngradeSince` requests. Without this
+                    // optimization, downgrading sinces could fall behind in the face of a large
+                    // amount of storage collections.
+                    let commands = iter::once(cmd).chain(
+                        iter::from_fn(|| self.cmds_rx.try_recv().ok())
+                    );
+                    let mut downgrades = BTreeMap::<_, Antichain<_>>::new();
+                    for cmd in commands {
+                        match cmd {
+                            BackgroundCmd::Register{
+                                id,
+                                is_in_txns,
+                                write_handle,
+                                since_handle
+                            } => {
+                                debug!("registering handles for {}", id);
+                                let previous = self.shard_by_id.insert(id, write_handle.shard_id());
+                                if previous.is_some() {
+                                    panic!("already registered a WriteHandle for collection {id}");
+                                }
 
-                            let previous = self.since_handles.insert(id, since_handle);
-                            if previous.is_some() {
-                                panic!("already registered a SinceHandle for collection {id}");
-                            }
+                                let previous = self.since_handles.insert(id, since_handle);
+                                if previous.is_some() {
+                                    panic!("already registered a SinceHandle for collection {id}");
+                                }
 
-                            if is_in_txns {
-                                self.txns_shards.insert(id);
-                            } else {
-                                let upper = write_handle.upper().clone();
-                                if !upper.is_empty() {
-                                    let fut = gen_upper_future(id, write_handle, upper);
-                                    upper_futures.push(fut.boxed());
+                                if is_in_txns {
+                                    self.txns_shards.insert(id);
+                                } else {
+                                    let upper = write_handle.upper().clone();
+                                    if !upper.is_empty() {
+                                        let fut = gen_upper_future(id, write_handle, upper);
+                                        upper_futures.push(fut.boxed());
+                                    }
                                 }
                             }
-
-                        }
-                        BackgroundCmd::DowngradeSince(cmds) => {
-                            self.downgrade_sinces(cmds).await;
-                        }
-                        BackgroundCmd::SnapshotStats(id, as_of, tx) => {
-                            // NB: The requested as_of could be arbitrarily far
-                            // in the future. So, in order to avoid blocking
-                            // this loop until it's available and the
-                            // `snapshot_stats` call resolves, instead return
-                            // the future to the caller and await it there.
-                            let res = match self.since_handles.get(&id) {
-                                Some(x) => {
-                                    let fut: BoxFuture<
-                                        'static,
-                                        Result<SnapshotStats, StorageError<T>>,
-                                    > = match as_of {
-                                        SnapshotStatsAsOf::Direct(as_of) => {
-                                            x.snapshot_stats(id, Some(as_of))
-                                        }
-                                        SnapshotStatsAsOf::Txns(data_snapshot) => {
-                                            x.snapshot_stats_from_txn(id, data_snapshot)
-                                        }
-                                    };
-                                    SnapshotStatsRes(fut)
+                            BackgroundCmd::DowngradeSince(cmds) => {
+                                for (id, new) in cmds {
+                                    downgrades.entry(id)
+                                        .and_modify(|since| since.join_assign(&new))
+                                        .or_insert(new);
                                 }
-                                None => SnapshotStatsRes(Box::pin(futures::future::ready(Err(
-                                    StorageError::IdentifierMissing(id),
-                                )))),
-                            };
-                            // It's fine if the listener hung up.
-                            let _ = tx.send(res);
+                            }
+                            BackgroundCmd::SnapshotStats(id, as_of, tx) => {
+                                // NB: The requested as_of could be arbitrarily far
+                                // in the future. So, in order to avoid blocking
+                                // this loop until it's available and the
+                                // `snapshot_stats` call resolves, instead return
+                                // the future to the caller and await it there.
+                                let res = match self.since_handles.get(&id) {
+                                    Some(x) => {
+                                        let fut: BoxFuture<
+                                            'static,
+                                            Result<SnapshotStats, StorageError<T>>,
+                                        > = match as_of {
+                                            SnapshotStatsAsOf::Direct(as_of) => {
+                                                x.snapshot_stats(id, Some(as_of))
+                                            }
+                                            SnapshotStatsAsOf::Txns(data_snapshot) => {
+                                                x.snapshot_stats_from_txn(id, data_snapshot)
+                                            }
+                                        };
+                                        SnapshotStatsRes(fut)
+                                    }
+                                    None => SnapshotStatsRes(Box::pin(futures::future::ready(Err(
+                                        StorageError::IdentifierMissing(id),
+                                    )))),
+                                };
+                                // It's fine if the listener hung up.
+                                let _ = tx.send(res);
+                            }
                         }
+                    }
+
+                    if !downgrades.is_empty() {
+                        self.downgrade_sinces(downgrades).await;
                     }
                 }
                 Some(holds_changes) = self.holds_rx.recv() => {
@@ -2916,37 +2944,60 @@ where
         }
     }
 
-    async fn downgrade_sinces(&mut self, cmds: Vec<(GlobalId, Antichain<T>)>) {
+    async fn downgrade_sinces(&mut self, cmds: BTreeMap<GlobalId, Antichain<T>>) {
+        // Process all persist calls concurrently.
+        let mut futures = Vec::with_capacity(cmds.len());
         for (id, new_since) in cmds {
-            let since_handle = if let Some(c) = self.since_handles.get_mut(&id) {
-                c
-            } else {
+            // We need to take the since handles here, to satisfy the borrow checker.
+            // We make sure to always put them back below.
+            let Some(mut since_handle) = self.since_handles.remove(&id) else {
                 // This can happen when someone concurrently drops a collection.
                 trace!("downgrade_sinces: reference to absent collection {id}");
                 continue;
             };
 
-            if id.is_user() {
-                trace!("downgrading since of {} to {:?}", id, new_since);
-            }
+            let fut = async move {
+                if id.is_user() {
+                    trace!("downgrading since of {} to {:?}", id, new_since);
+                }
 
-            let epoch = since_handle.opaque().clone();
-            let result = if new_since.is_empty() {
-                // A shard's since reaching the empty frontier is a prereq for
-                // being able to finalize a shard, so the final downgrade should
-                // never be rate-limited.
-                let res = Some(
+                let epoch = since_handle.opaque().clone();
+                let result = if new_since.is_empty() {
+                    // A shard's since reaching the empty frontier is a prereq for
+                    // being able to finalize a shard, so the final downgrade should
+                    // never be rate-limited.
+                    Some(
+                        since_handle
+                            .compare_and_downgrade_since(&epoch, (&epoch, &new_since))
+                            .await,
+                    )
+                } else {
                     since_handle
-                        .compare_and_downgrade_since(&epoch, (&epoch, &new_since))
-                        .await,
-                );
+                        .maybe_compare_and_downgrade_since(&epoch, (&epoch, &new_since))
+                        .await
+                };
+                (id, since_handle, result)
+            };
+            futures.push(fut);
+        }
 
+        for (id, since_handle, result) in futures::future::join_all(futures).await {
+            let new_since = match result {
+                Some(Ok(since)) => Some(since),
+                Some(Err(other_epoch)) => mz_ore::halt!(
+                    "fenced by envd @ {other_epoch:?}. ours = {:?}",
+                    since_handle.opaque(),
+                ),
+                None => None,
+            };
+
+            self.since_handles.insert(id, since_handle);
+
+            if new_since.is_some_and(|s| s.is_empty()) {
                 info!(%id, "removing persist handles because the since advanced to []!");
 
                 let _since_handle = self.since_handles.remove(&id).expect("known to exist");
-                let dropped_shard_id = if let Some(shard_id) = self.shard_by_id.remove(&id) {
-                    shard_id
-                } else {
+                let Some(dropped_shard_id) = self.shard_by_id.remove(&id) else {
                     panic!("missing GlobalId -> ShardId mapping for id {id}");
                 };
 
@@ -2956,7 +3007,7 @@ where
                 // our tracking.
                 self.txns_shards.remove(&id);
 
-                if !self
+                if self
                     .config
                     .lock()
                     .expect("lock poisoned")
@@ -2964,24 +3015,17 @@ where
                     .finalize_shards
                 {
                     info!(
-                        "not triggering shard finalization due to dropped storage object because enable_storage_shard_finalization parameter is false"
+                        %id, %dropped_shard_id,
+                        "enqueuing shard finalization due to dropped collection and dropped \
+                         persist handle",
                     );
-                    return;
+                    self.finalizable_shards.lock().insert(dropped_shard_id);
+                } else {
+                    info!(
+                        "not triggering shard finalization due to dropped storage object \
+                         because enable_storage_shard_finalization parameter is false"
+                    );
                 }
-
-                info!(%id, %dropped_shard_id, "enqueing shard finalization due to dropped collection and dropped persist handle");
-
-                self.finalizable_shards.lock().insert(dropped_shard_id);
-
-                res
-            } else {
-                since_handle
-                    .maybe_compare_and_downgrade_since(&epoch, (&epoch, &new_since))
-                    .await
-            };
-
-            if let Some(Err(other_epoch)) = result {
-                mz_ore::halt!("fenced by envd @ {other_epoch:?}. ours = {epoch:?}");
             }
         }
     }
@@ -3099,36 +3143,35 @@ async fn finalize_shards_task<T>(
                         write_handle.expire().await;
 
                         if force_downgrade_since {
-                            let mut since_handle: SinceHandle<
-                                SourceData,
-                                (),
-                                T,
-                                StorageDiff,
-                                PersistEpoch,
-                            > = persist_client
-                                .open_critical_since(
-                                    shard_id,
-                                    PersistClient::CONTROLLER_CRITICAL_SINCE,
-                                    Diagnostics::from_purpose("finalizing shards"),
-                                )
-                                .await
-                                .expect("invalid persist usage");
-                            let handle_epoch = since_handle.opaque().clone();
-                            let our_epoch = epoch.clone();
-                            let epoch = if our_epoch.0 > handle_epoch.0 {
+                            let our_opaque = Opaque::encode(&epoch);
+                            let mut since_handle: SinceHandle<SourceData, (), T, StorageDiff> =
+                                persist_client
+                                    .open_critical_since(
+                                        shard_id,
+                                        PersistClient::CONTROLLER_CRITICAL_SINCE,
+                                        our_opaque.clone(),
+                                        Diagnostics::from_purpose("finalizing shards"),
+                                    )
+                                    .await
+                                    .expect("invalid persist usage");
+                            let handle_opaque = since_handle.opaque().clone();
+                            let opaque = if our_opaque.codec_name() == handle_opaque.codec_name()
+                                && epoch.0 > handle_opaque.decode::<PersistEpoch>().0
+                            {
                                 // We're newer, but it's fine to use the
                                 // handle's old epoch to try and downgrade.
-                                handle_epoch
+                                handle_opaque
                             } else {
                                 // Good luck, buddy! The downgrade below will
                                 // not succeed. There's a process with a newer
                                 // epoch out there and someone at some juncture
                                 // will fence out this process.
-                                our_epoch
+                                // TODO: consider applying the downgrade no matter what!
+                                our_opaque
                             };
                             let new_since = Antichain::new();
                             let downgrade = since_handle
-                                .compare_and_downgrade_since(&epoch, (&epoch, &new_since))
+                                .compare_and_downgrade_since(&opaque, (&opaque, &new_since))
                                 .await;
                             if let Err(e) = downgrade {
                                 warn!("tried to finalize a shard with an advancing epoch: {e:?}");
@@ -3254,6 +3297,7 @@ mod tests {
             .open_critical_since(
                 shard_id,
                 PersistClient::CONTROLLER_CRITICAL_SINCE,
+                Opaque::encode(&PersistEpoch::default()),
                 Diagnostics::for_tests(),
             )
             .await

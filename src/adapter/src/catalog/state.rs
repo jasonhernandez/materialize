@@ -1400,6 +1400,7 @@ impl CatalogState {
                     dependencies,
                     replacement_target: materialized_view.replacement_target,
                     cluster_id: materialized_view.cluster_id,
+                    target_replica: materialized_view.target_replica,
                     non_null_assertions: materialized_view.non_null_assertions,
                     custom_logical_compaction_window: materialized_view.compaction_window,
                     refresh_schedule: materialized_view.refresh_schedule,
@@ -2597,18 +2598,7 @@ impl CatalogState {
             match entry.item() {
                 CatalogItem::Source(source) => {
                     let source_cw = source.custom_logical_compaction_window.unwrap_or_default();
-                    match source.data_source {
-                        DataSourceDesc::Ingestion { .. }
-                        | DataSourceDesc::OldSyntaxIngestion { .. }
-                        | DataSourceDesc::IngestionExport { .. } => {
-                            cws.entry(source_cw).or_default().insert(item_id);
-                        }
-                        DataSourceDesc::Introspection(_)
-                        | DataSourceDesc::Progress
-                        | DataSourceDesc::Webhook { .. } => {
-                            cws.entry(source_cw).or_default().insert(item_id);
-                        }
-                    }
+                    cws.entry(source_cw).or_default().insert(item_id);
                 }
                 CatalogItem::Table(table) => {
                     let table_cw = table.custom_logical_compaction_window.unwrap_or_default();

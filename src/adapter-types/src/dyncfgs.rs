@@ -13,8 +13,6 @@ use std::time::Duration;
 
 use mz_dyncfg::{Config, ConfigSet};
 
-use crate::timestamp_selection::ConstraintBasedTimestampSelection;
-
 pub const ALLOW_USER_SESSIONS: Config<bool> = Config::new(
     "allow_user_sessions",
     true,
@@ -142,12 +140,6 @@ pub const OIDC_AUTHENTICATION_CLAIM: Config<&'static str> = Config::new(
     "OIDC authentication claim to use as username.",
 );
 
-pub const CONSTRAINT_BASED_TIMESTAMP_SELECTION: Config<&'static str> = Config::new(
-    "constraint_based_timestamp_selection",
-    ConstraintBasedTimestampSelection::const_default().as_str(),
-    "Whether to use the constraint-based timestamp selection, one of: enabled, disabled, verify",
-);
-
 pub const PERSIST_FAST_PATH_ORDER: Config<bool> = Config::new(
     "persist_fast_path_order",
     false,
@@ -160,6 +152,20 @@ pub const ENABLE_S3_TABLES_REGION_CHECK: Config<bool> = Config::new(
     "enable_s3_tables_region_check",
     false,
     "Whether to enforce that S3 Tables connections are in the same region as the environment.",
+);
+
+/// Whether the MCP agents endpoint is enabled.
+pub const ENABLE_MCP_AGENTS: Config<bool> = Config::new(
+    "enable_mcp_agents",
+    true,
+    "Whether the MCP agents HTTP endpoint is enabled. When false, requests to /api/mcp/agents return 503 Service Unavailable.",
+);
+
+/// Whether the MCP observatory endpoint is enabled.
+pub const ENABLE_MCP_OBSERVATORY: Config<bool> = Config::new(
+    "enable_mcp_observatory",
+    true,
+    "Whether the MCP observatory HTTP endpoint is enabled. When false, requests to /api/mcp/observatory return 503 Service Unavailable.",
 );
 
 /// Adds the full set of all adapter `Config`s.
@@ -183,7 +189,8 @@ pub fn all_dyncfgs(configs: ConfigSet) -> ConfigSet {
         .add(&OIDC_ISSUER)
         .add(&OIDC_AUDIENCE)
         .add(&OIDC_AUTHENTICATION_CLAIM)
-        .add(&CONSTRAINT_BASED_TIMESTAMP_SELECTION)
         .add(&PERSIST_FAST_PATH_ORDER)
         .add(&ENABLE_S3_TABLES_REGION_CHECK)
+        .add(&ENABLE_MCP_AGENTS)
+        .add(&ENABLE_MCP_OBSERVATORY)
 }
