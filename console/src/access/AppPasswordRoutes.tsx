@@ -12,14 +12,29 @@ import { Route } from "react-router-dom";
 
 import { User } from "~/external-library-wrappers/frontegg";
 import { SentryRoutes } from "~/sentry";
+import { getSessionAuthProvider } from "~/utils/sessionAuthProvider";
 
 import AppPasswordsPage from "./AppPasswordsPage";
 import MzCliAppPasswordPage from "./MzCliAppPasswordPage";
+import OryAppPasswordsPage from "./OryAppPasswordsPage";
 
 export const AppPasswordRoutes = ({ user }: { user: User }) => {
+  // Ory-backed organizations manage app passwords via Ory Talos through
+  // the cloud global API; Frontegg-backed organizations via the Frontegg
+  // api-tokens API. See cloud/doc/design/20260710_ory_auth_migration.md.
+  const isOrySession = getSessionAuthProvider() === "ory";
   return (
     <SentryRoutes>
-      <Route path="/" element={<AppPasswordsPage user={user} />} />
+      <Route
+        path="/"
+        element={
+          isOrySession ? (
+            <OryAppPasswordsPage />
+          ) : (
+            <AppPasswordsPage user={user} />
+          )
+        }
+      />
       <Route path="cli" element={<MzCliAppPasswordPage user={user} />} />
     </SentryRoutes>
   );

@@ -13,6 +13,65 @@
  */
 
 export interface paths {
+    "/api/app-passwords": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** `GET /api/app-passwords`: list the calling user's app passwords. */
+        get: operations["list_app_passwords"];
+        put?: never;
+        /** `POST /api/app-passwords`: create an app password for the calling user. */
+        post: operations["create_app_password"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/app-passwords/{key_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * `DELETE /api/app-passwords/{key_id}`: revoke one of the calling
+         *     user's app passwords.
+         */
+        delete: operations["delete_app_password"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/discovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /api/auth/discovery`: report which auth provider serves the given
+         *     email. Defaults to Frontegg whenever Ory is not configured, the email is
+         *     malformed, or the flag is off/unavailable.
+         */
+        post: operations["discover_auth_provider"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cloud-regions": {
         parameters: {
             query?: never;
@@ -235,6 +294,32 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AuthDiscoveryRequest: {
+            /** @description The email the user is trying to log in or sign up with. */
+            email: string;
+        };
+        AuthDiscoveryResponse: {
+            /** @description The auth provider the caller should use. */
+            provider: components["schemas"]["AuthProviderKind"];
+        };
+        CreateAppPasswordRequest: {
+            /** @description Human-readable name for the app password. */
+            name: string;
+        };
+        IssuedApiKey: {
+            key_id: string;
+            actor_id: string;
+            name?: string | null;
+            status?: string | null;
+            create_time?: string | null;
+            expire_time?: string | null;
+            last_used_time?: string | null;
+        };
+        AuthProviderKind: "frontegg" | "ory";
+        CreateAppPasswordResponse: components["schemas"]["IssuedApiKey"] & {
+            /** @description The app password secret. Only returned once, at creation. */
+            secret: string;
+        };
         /** @description Costs for all tracked resources. */
         AllCosts: {
             compute: components["schemas"]["ComputeCosts"];
@@ -523,6 +608,137 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_app_passwords: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The calling user's app passwords */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssuedApiKey"][];
+                };
+            };
+            /** @description App passwords for this organization are managed by Frontegg */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description App-password management is not available on this stack */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    create_app_password: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAppPasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description The created app password; the secret is only returned once */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateAppPasswordResponse"];
+                };
+            };
+            /** @description App passwords for this organization are managed by Frontegg */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description App-password management is not available on this stack */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    delete_app_password: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The app password's key ID */
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The app password was revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No such app password owned by the calling user */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    discover_auth_provider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuthDiscoveryRequest"];
+            };
+        };
+        responses: {
+            /** @description The auth provider serving this email */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthDiscoveryResponse"];
+                };
+            };
+            /** @description Invalid email */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     get_cloud_regions: {
         parameters: {
             query?: never;
