@@ -42,6 +42,7 @@ const enabledEnvironment: EnabledEnvironment = {
   errors: [],
   state: "enabled",
   status: { health: "pending", errors: [] },
+  upToDate: "Unknown",
   httpAddress: "8zpze6ltqnsjok9vvf2i99st5.us-east-1.aws.example.com:443",
   sqlAddress: "8zpze6ltqnsjok9vvf2i99st5.us-east-1.aws.example.com:6875",
   resolvable: true,
