@@ -81,7 +81,22 @@ byte-for-byte the status quo.
   should trim locales (we ship English-only today).
 - We own flow lifecycle: create/fetch by `?flow=` param, restart on
   expiry. This is ~40 lines of react-query (`useOryFlowQuery`) and slots
-  into the console's existing patterns.
+  into the console's existing patterns. One subtlety the tests caught:
+  after creating a flow and writing its id to the URL, the cache must be
+  seeded under the new id or the key change refetches the flow just
+  received.
+- `OrySpikeRoutes.test.tsx` exercises the wiring against realistic Kratos
+  payloads served by MSW: flow creation renders the full password form
+  (identifier, password, csrf, submit action), `?flow=` resume fetches by
+  id, expired flows (410) restart cleanly, settings without a session
+  shows the sign-in prompt, and the session page handles both 401 and an
+  active session. This validates our side of the contract and that
+  Elements mounts in the app's provider stack; it does not cover CORS,
+  cookies, or email round-trips, which still need a live project.
+- Elements' ESM build uses extension-less internal imports
+  (ory/elements#573). Vite resolves them, but vitest externalizes the
+  package to node's stricter ESM loader, so `vitest.config.ts` inlines
+  `@ory/elements-react`.
 - Cross-flow links inside Elements ("Forgot password?", "Sign up") are
   plain `<a>` full-page navigations, not react-router transitions
   (ory/elements#590). Acceptable for auth pages; fixable later via the

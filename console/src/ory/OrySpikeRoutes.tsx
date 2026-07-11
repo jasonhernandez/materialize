@@ -47,7 +47,7 @@ import {
   Settings,
   Verification,
 } from "@ory/elements-react/theme";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import React from "react";
 import { Link, Route, useSearchParams } from "react-router-dom";
 
@@ -88,6 +88,7 @@ const useOryFlowQuery = <F extends { id: string }>(
   get: (client: FrontendApi, id: string) => Promise<F>,
 ) => {
   const { client, config } = useOrySpike();
+  const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const flowId = searchParams.get("flow") ?? undefined;
 
@@ -111,11 +112,17 @@ const useOryFlowQuery = <F extends { id: string }>(
     },
   });
 
-  const createdFlowId = query.data?.id;
+  const flow = query.data;
   React.useEffect(() => {
-    if (!createdFlowId || createdFlowId === flowId) return;
-    setSearchParams({ flow: createdFlowId }, { replace: true });
-  }, [createdFlowId, flowId, setSearchParams]);
+    if (!flow || flow.id === flowId) return;
+    // Seed the cache under the new id before syncing the URL, otherwise
+    // the key change would refetch the flow we already hold.
+    queryClient.setQueryData(
+      ["ory-spike", config.sdk?.url, flowName, flow.id],
+      flow,
+    );
+    setSearchParams({ flow: flow.id }, { replace: true });
+  }, [flow, flowId, flowName, config.sdk?.url, queryClient, setSearchParams]);
 
   return query;
 };
