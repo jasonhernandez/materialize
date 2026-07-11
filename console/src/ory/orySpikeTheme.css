@@ -1,0 +1,35 @@
+/* Copyright Materialize, Inc. and contributors. All rights reserved.
+ *
+ * Use of this software is governed by the Business Source License
+ * included in the LICENSE file.
+ *
+ * As of the Change Date specified in that file, in accordance with
+ * the Business Source License, use of this software will be governed
+ * by the Apache License, Version 2.0.
+ */
+
+/* Re-brands Ory Elements' default theme with the Materialize purple scale
+ * (src/theme/colors.ts) and Inter.
+ *
+ * The theme resolves all of its semantic tokens from `--brand-*` variables
+ * defined on `:root` inside `@layer ory-elements`. Custom-property
+ * substitution happens where a variable is *defined*, so these overrides
+ * must also target `:root` (a wrapper class around the card would not
+ * propagate through the theme's `:root`-level indirection). Being
+ * un-layered, they beat the theme's layered declarations regardless of
+ * import order. The variables are Ory-specific names, so nothing outside
+ * Ory Elements UI is affected. */
+:root {
+  --brand-50: #f1ecff;
+  --brand-100: #e1d6ff;
+  --brand-200: #c8b5ff;
+  --brand-300: #b59aff;
+  --brand-400: #7f4eff;
+  --brand-500: #5a34cb;
+  --brand-600: #472f85;
+  --brand-700: #391d7e;
+  --brand-800: #1b164c;
+  --brand-900: #040126;
+  --brand-950: #040126;
+  --font-sans: "Inter", Arial, sans-serif;
+}

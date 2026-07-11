@@ -50,6 +50,8 @@
     "@lezer/highlight": "^1.0.0",
     "@materializeinc/sql-lexer": "^26.16.0",
     "@materializeinc/sql-pretty": "^26.16.0",
+    "@ory/client-fetch": "1.22.22",
+    "@ory/elements-react": "1.2.0",
     "@rehookify/datepicker": "^6.6.7",
     "@segment/analytics-next": "^1.82.0",
     "@sentry/react": "^10.45.0",
