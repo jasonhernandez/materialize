@@ -24,7 +24,7 @@ export type Organization = components["schemas"]["OrganizationResponse"];
 export type PlanType = components["schemas"]["PlanType"];
 export type Invoice = components["schemas"]["Invoice"];
 export type Region = components["schemas"]["Region"];
-export type Regions = components["schemas"]["Regions"];
+export type Regions = components["schemas"]["Paginated_Region"];
 export type CreditBlock = components["schemas"]["CreditBlock"];
 export type DailyCosts = components["schemas"]["DailyCostResponse"];
 export type AllCosts = components["schemas"]["AllCosts"];
@@ -239,7 +239,7 @@ export async function issueLicenseKey(
     signal: requestOptions?.signal,
     headers,
     body: {
-      useCaseId: null, // Optional field, can be null
+      environmentId: null, // Optional field, can be null
     },
     ...options,
   });
@@ -266,7 +266,7 @@ export async function issueCommunityLicenseKey(
 }
 
 export async function getSelfManagedSubscription(
-  useCaseId: string | null,
+  environmentId: string | null,
   requestOptions: OpenApiRequestOptions = {},
 ) {
   const { headers, ...options } = requestOptions;
@@ -275,7 +275,7 @@ export async function getSelfManagedSubscription(
     {
       params: {
         path: {
-          useCaseId,
+          environmentId,
         },
       },
       signal: requestOptions?.signal,
@@ -284,4 +284,95 @@ export async function getSelfManagedSubscription(
     },
   );
   return handleOpenApiResponseWithBody(data, response);
+}
+
+export type AuthDiscoveryResponse =
+  components["schemas"]["AuthDiscoveryResponse"];
+export type AuthProviderKind = components["schemas"]["AuthProviderKind"];
+export type AppPassword = components["schemas"]["IssuedApiKey"];
+export type CreateAppPasswordResponse =
+  components["schemas"]["CreateAppPasswordResponse"];
+
+/**
+ * Reports which auth provider (Frontegg or Ory) serves the given login
+ * email, so the login flow can route the user before they authenticate.
+ * Unauthenticated; driven by the `ory-auth-enabled` LaunchDarkly flag on
+ * the server.
+ */
+export async function discoverAuthProvider(
+  email: string,
+  requestOptions: OpenApiRequestOptions = {},
+) {
+  const { headers, ...options } = requestOptions;
+  const { data, response } = await getClient().POST("/api/auth/discovery", {
+    signal: requestOptions?.signal,
+    headers,
+    body: {
+      email,
+    },
+    ...options,
+  });
+  return handleOpenApiResponseWithBody(data, response);
+}
+
+/**
+ * Lists the calling user's app passwords. Ory-backed organizations only;
+ * Frontegg-backed organizations manage app passwords via the Frontegg
+ * api-tokens API (see ~/api/frontegg).
+ */
+export async function listAppPasswords(
+  requestOptions: OpenApiRequestOptions = {},
+) {
+  const { headers, ...options } = requestOptions;
+  const { data, response } = await getClient().GET("/api/app-passwords", {
+    signal: requestOptions?.signal,
+    headers,
+    ...options,
+  });
+  return handleOpenApiResponseWithBody(data, response);
+}
+
+/**
+ * Creates an app password for the calling user. The secret in the
+ * response is only returned once. Ory-backed organizations only.
+ */
+export async function createAppPassword(
+  name: string,
+  requestOptions: OpenApiRequestOptions = {},
+) {
+  const { headers, ...options } = requestOptions;
+  const { data, response } = await getClient().POST("/api/app-passwords", {
+    signal: requestOptions?.signal,
+    headers,
+    body: {
+      name,
+    },
+    ...options,
+  });
+  return handleOpenApiResponseWithBody(data, response);
+}
+
+/**
+ * Revokes one of the calling user's app passwords. Ory-backed
+ * organizations only.
+ */
+export async function deleteAppPassword(
+  keyId: string,
+  requestOptions: OpenApiRequestOptions = {},
+) {
+  const { headers, ...options } = requestOptions;
+  const { data, response } = await getClient().DELETE(
+    "/api/app-passwords/{key_id}",
+    {
+      params: {
+        path: {
+          key_id: keyId,
+        },
+      },
+      signal: requestOptions?.signal,
+      headers,
+      ...options,
+    },
+  );
+  return handleOpenApiResponse(data, response);
 }
