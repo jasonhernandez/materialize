@@ -29,6 +29,15 @@ function physicalCpuCount() {
 const vitestConfig = defineConfig({
   test: {
     environment: "jsdom",
+    server: {
+      deps: {
+        // @ory/elements-react's ESM build uses extension-less internal
+        // imports (ory/elements#573) that node's ESM loader rejects when
+        // the package is externalized. Inline it so Vite resolves them,
+        // as it does for the browser build.
+        inline: [/@ory\/elements-react/],
+      },
+    },
     exclude: [
       "**/node_modules/**",
       "**/dist/**",

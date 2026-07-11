@@ -22,11 +22,14 @@ import {
   useOidcManagerQuery,
 } from "~/external-library-wrappers/oidc";
 import { AUTH_ROUTES } from "~/fronteggRoutes";
+import { isOrySpikeEnabled, ORY_SPIKE_BASE_PATH } from "~/ory/orySpikeConfig";
 import { AuthenticatedRoutes } from "~/platform/AuthenticatedRoutes";
 import { SentryRoutes } from "~/sentry";
 
 import { Login } from "./auth/Login";
 import { OidcCallback } from "./auth/OidcCallback";
+
+const OrySpikeRoutes = React.lazy(() => import("~/ory/OrySpikeRoutes"));
 
 // Redirect already-signed-in users off the login page. The password session
 // cookie is httpOnly, so probe the server; a live OIDC token skips the probe.
@@ -126,6 +129,18 @@ export const UnauthenticatedRoutes = () => {
 
   if (appConfig.mode === "cloud" && appConfig.isImpersonating) {
     return <CloudAuthenticatedRoutes />;
+  }
+
+  // Spike for the Ory Elements evaluation, mounted ahead of the Frontegg
+  // auth redirect. Only active when the localStorage opt-in is set (see
+  // ~/ory/orySpikeConfig.ts), so ordinary cloud sessions never hit it.
+  if (isOrySpikeEnabled()) {
+    return (
+      <SentryRoutes>
+        <Route path={`${ORY_SPIKE_BASE_PATH}/*`} element={<OrySpikeRoutes />} />
+        <Route path="*" element={<CloudFronteggAuthenticatedRoutes />} />
+      </SentryRoutes>
+    );
   }
 
   return <CloudFronteggAuthenticatedRoutes />;
