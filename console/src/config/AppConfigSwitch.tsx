@@ -7,8 +7,11 @@
 // the Business Source License, use of this software will be governed
 // by the Apache License, Version 2.0.
 
+import { useAtomValue } from "jotai";
 import React from "react";
 
+import { authProviderAtom } from "~/auth/authProviderAtom";
+import { orySessionToUser } from "~/auth/orySessionUser";
 import {
   type AuthActions,
   type AuthState,
@@ -21,23 +24,44 @@ import {
   useAuth as useOidcAuth,
   useOidcManagerQuery,
 } from "~/external-library-wrappers/oidc";
+import type { OrySession } from "~/external-library-wrappers/ory";
+import { useOryAuth } from "~/hooks/useOryAuth";
 
 import { CloudAppConfig, SelfManagedAppConfig } from "./AppConfig";
 import { useAppConfig } from "./useAppConfig";
 
 type CloudImpersonationRuntimeConfig = {
   isImpersonating: true;
+  authProvider?: undefined;
 };
 
 type CloudFronteggRuntimeConfig = {
   isImpersonating: false;
+  authProvider: "frontegg";
   user: User;
   auth: AuthState;
   authActions: AuthActions;
 };
 
+/**
+ * Ory-specific runtime config.
+ *
+ * Carries the raw Ory session for Ory-aware components, plus a
+ * Frontegg-`User`-shaped view of it (see ~/auth/orySessionUser) so the many
+ * existing consumers of `runtimeConfig.user` work unchanged. Frontegg's
+ * `auth`/`authActions` have no Ory analog; the few components that use them
+ * (tenant switching in ProfileDropdown) branch on `authProvider`.
+ */
+export type CloudOryRuntimeConfig = {
+  isImpersonating: false;
+  authProvider: "ory";
+  session: OrySession;
+  user: User;
+};
+
 export type CloudRuntimeConfig =
   | CloudFronteggRuntimeConfig
+  | CloudOryRuntimeConfig
   | CloudImpersonationRuntimeConfig;
 
 type SelfManagedOidcAvailableRuntimeConfig = {
@@ -76,7 +100,7 @@ type SelfManagedConfigElement =
   | React.ReactNode
   | SelfManagedConfigElementFunction;
 
-const CloudConfigElementWrapper = ({
+const CloudFronteggConfigElementWrapper = ({
   cloudAppConfig,
   cloudConfigElement,
 }: {
@@ -90,9 +114,43 @@ const CloudConfigElementWrapper = ({
     appConfig: cloudAppConfig,
     runtimeConfig: {
       isImpersonating: false,
+      authProvider: "frontegg",
       user,
       auth,
       authActions,
+    },
+  });
+};
+
+/**
+ * Wrapper for Ory-authenticated cloud users.
+ * Gets the session from OryProviderWrapper context and presents it both
+ * raw (`session`) and as a Frontegg-`User`-shaped view (`user`).
+ */
+const CloudOryConfigElementWrapper = ({
+  cloudAppConfig,
+  cloudConfigElement,
+}: {
+  cloudAppConfig: Readonly<CloudAppConfig>;
+  cloudConfigElement: CloudConfigElementFunction;
+}) => {
+  const { session } = useOryAuth();
+  const user = React.useMemo(
+    () => (session ? orySessionToUser(session) : null),
+    [session],
+  );
+  if (!session || !user) {
+    // Unreachable in normal operation: CloudOryRoutes redirects
+    // unauthenticated users to the login flow before rendering this.
+    return null;
+  }
+  return cloudConfigElement({
+    appConfig: cloudAppConfig,
+    runtimeConfig: {
+      isImpersonating: false,
+      authProvider: "ory",
+      session,
+      user,
     },
   });
 };
@@ -173,6 +231,7 @@ export const AppConfigSwitch = ({
   shouldAutoLogout?: boolean;
 }) => {
   const appConfig = useAppConfig();
+  const authProvider = useAtomValue(authProviderAtom);
 
   if (appConfig.mode === "cloud") {
     if (typeof cloudConfigElement === "function") {
@@ -184,8 +243,19 @@ export const AppConfigSwitch = ({
           />
         );
       }
+
+      // Route to appropriate config wrapper based on auth provider
+      if (authProvider === "ory") {
+        return (
+          <CloudOryConfigElementWrapper
+            cloudAppConfig={appConfig}
+            cloudConfigElement={cloudConfigElement}
+          />
+        );
+      }
+
       return (
-        <CloudConfigElementWrapper
+        <CloudFronteggConfigElementWrapper
           cloudAppConfig={appConfig}
           cloudConfigElement={cloudConfigElement}
         />

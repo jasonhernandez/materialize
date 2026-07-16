@@ -7,19 +7,31 @@
 // the Business Source License, use of this software will be governed
 // by the Apache License, Version 2.0.
 
+import { useAtomValue } from "jotai";
 import React from "react";
 import { Route } from "react-router-dom";
 
+import { authProviderAtom } from "~/auth/authProviderAtom";
 import { User } from "~/external-library-wrappers/frontegg";
 import { SentryRoutes } from "~/sentry";
 
 import AppPasswordsPage from "./AppPasswordsPage";
 import MzCliAppPasswordPage from "./MzCliAppPasswordPage";
+import OryAppPasswordsPage from "./OryAppPasswordsPage";
 
 export const AppPasswordRoutes = ({ user }: { user: User }) => {
+  // Frontegg app passwords are managed via the Frontegg REST API; under
+  // Ory they are Talos-backed keys managed through the sync-server.
+  const authProvider = useAtomValue(authProviderAtom);
+  const passwordsPage =
+    authProvider === "ory" ? (
+      <OryAppPasswordsPage user={user} />
+    ) : (
+      <AppPasswordsPage user={user} />
+    );
   return (
     <SentryRoutes>
-      <Route path="/" element={<AppPasswordsPage user={user} />} />
+      <Route path="/" element={passwordsPage} />
       <Route path="cli" element={<MzCliAppPasswordPage user={user} />} />
     </SentryRoutes>
   );

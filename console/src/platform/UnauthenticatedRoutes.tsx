@@ -8,10 +8,12 @@
 // by the Apache License, Version 2.0.
 
 import { useQuery } from "@tanstack/react-query";
+import { useAtomValue } from "jotai";
 import React from "react";
-import { Navigate, Route } from "react-router-dom";
+import { Navigate, Route, useLocation } from "react-router-dom";
 
 import { hasActiveSession, LOGIN_PATH } from "~/api/materialize/auth";
+import { authProviderAtom } from "~/auth/authProviderAtom";
 import { LaunchDarklyProvider } from "~/components/LaunchDarkly";
 import LoadingScreen from "~/components/LoadingScreen";
 import { type SelfManagedAppConfig } from "~/config/AppConfig";
@@ -22,11 +24,14 @@ import {
   useOidcManagerQuery,
 } from "~/external-library-wrappers/oidc";
 import { AUTH_ROUTES } from "~/fronteggRoutes";
+import { useOryAuth } from "~/hooks/useOryAuth";
 import { AuthenticatedRoutes } from "~/platform/AuthenticatedRoutes";
 import { SentryRoutes } from "~/sentry";
 
 import { Login } from "./auth/Login";
 import { OidcCallback } from "./auth/OidcCallback";
+import { OryAuthRoutes } from "./auth/ory/OryAuthRoutes";
+import { OryCallback } from "./auth/ory/OryCallback";
 
 // Redirect already-signed-in users off the login page. The password session
 // cookie is httpOnly, so probe the server; a live OIDC token skips the probe.
@@ -116,8 +121,56 @@ const CloudFronteggAuthenticatedRoutes = () => {
   return <CloudAuthenticatedRoutes />;
 };
 
+/**
+ * Ory-specific routes container.
+ * Handles both auth flows (login, registration, etc.) and authenticated routes.
+ *
+ * Auth flow routes (/auth/ory/* and /callback) are accessible without authentication.
+ * Other routes require authentication and redirect to login if not authenticated.
+ */
+const CloudOryRoutes = () => {
+  const { isAuthenticated, isLoading } = useOryAuth();
+  // Must come from the router (not window.location) so this component
+  // re-renders on SPA navigation: after OryCallback navigates away from
+  // /callback, isAuthRoute has to be re-evaluated or the stale
+  // auth-routes-only table matches nothing and renders a blank page.
+  const routerLocation = useLocation();
+
+  // Check if we're on an Ory auth route (these don't require authentication)
+  // Also check /callback for OAuth2 redirect compatibility
+  const isAuthRoute =
+    routerLocation.pathname.startsWith("/auth/ory/") ||
+    routerLocation.pathname === "/callback";
+
+  // Auth routes are always accessible
+  if (isAuthRoute) {
+    return (
+      <SentryRoutes>
+        <Route path="/auth/ory/*" element={<OryAuthRoutes />} />
+        <Route path="/callback" element={<OryCallback />} />
+      </SentryRoutes>
+    );
+  }
+
+  // While Ory is loading for non-auth routes, show loading state
+  if (isLoading) {
+    return null;
+  }
+
+  // For non-auth routes, check authentication
+  if (!isAuthenticated) {
+    const fullPath =
+      routerLocation.pathname + routerLocation.search + routerLocation.hash;
+    const redirectUrl = encodeURIComponent(fullPath);
+    return <Navigate to={`/auth/ory/login?redirectUrl=${redirectUrl}`} />;
+  }
+
+  return <CloudAuthenticatedRoutes />;
+};
+
 export const UnauthenticatedRoutes = () => {
   const appConfig = useAppConfig();
+  const authProvider = useAtomValue(authProviderAtom);
 
   if (appConfig.mode === "self-managed") {
     return <SelfManagedRoutes appConfig={appConfig} />;
@@ -126,6 +179,11 @@ export const UnauthenticatedRoutes = () => {
 
   if (appConfig.mode === "cloud" && appConfig.isImpersonating) {
     return <CloudAuthenticatedRoutes />;
+  }
+
+  // Route to appropriate auth provider based on detection
+  if (authProvider === "ory") {
+    return <CloudOryRoutes />;
   }
 
   return <CloudFronteggAuthenticatedRoutes />;
