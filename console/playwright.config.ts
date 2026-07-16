@@ -73,39 +73,42 @@ const browserProjects = authProvidersToTest.flatMap((provider) => {
 // Get all browser project names for teardown dependencies
 const browserProjectNames = browserProjects.map((p) => p.name);
 
-const config: PlaywrightTestConfig = defineConfig({
-  projects: [
-    ...browserProjects,
-    {
-      name: "scalability",
-      use: { ...chromiumBase, authProvider: "frontegg" },
-      testMatch: "**/scalability/**/*.spec.ts",
+// The authProvider generic registers our custom per-project option with
+// Playwright's config types (read via test.info().project.use.authProvider).
+const config: PlaywrightTestConfig<{ authProvider?: E2EAuthProvider }> =
+  defineConfig<{ authProvider?: E2EAuthProvider }>({
+    projects: [
+      ...browserProjects,
+      {
+        name: "scalability",
+        use: { ...chromiumBase, authProvider: "frontegg" },
+        testMatch: "**/scalability/**/*.spec.ts",
+      },
+      // Teardown - cleans up after all tests. We need all our tests to be
+      // listed here, otherwise regions might be deleted out from under other
+      // tests while they are running.
+      {
+        name: "teardown",
+        testMatch: /global-teardown\.ts/,
+        dependencies: browserProjectNames,
+      },
+    ],
+    testDir: "e2e-tests",
+    // Per test timeout
+    timeout: 30 * 1000, // 30 seconds
+    use: {
+      acceptDownloads: true,
+      // Actions such as clicks, also waitForSelector calls
+      actionTimeout: 5 * 1000, // 5 seconds
+      trace: "on",
+      screenshot: "only-on-failure",
+      video: "retain-on-failure",
+      // In kind, we use self-signed certs
+      ignoreHTTPSErrors: true,
     },
-    // Teardown - cleans up after all tests. We need all our tests to be
-    // listed here, otherwise regions might be deleted out from under other
-    // tests while they are running.
-    {
-      name: "teardown",
-      testMatch: /global-teardown\.ts/,
-      dependencies: browserProjectNames,
-    },
-  ],
-  testDir: "e2e-tests",
-  // Per test timeout
-  timeout: 30 * 1000, // 30 seconds
-  use: {
-    acceptDownloads: true,
-    // Actions such as clicks, also waitForSelector calls
-    actionTimeout: 5 * 1000, // 5 seconds
-    trace: "on",
-    screenshot: "only-on-failure",
-    video: "retain-on-failure",
-    // In kind, we use self-signed certs
-    ignoreHTTPSErrors: true,
-  },
-  // If you change this, also update the value of `NUM_PLAYWRIGHT_WORKERS` in `./e2e-tests/util.ts`
-  workers: 5,
-  fullyParallel: true,
-});
+    // If you change this, also update the value of `NUM_PLAYWRIGHT_WORKERS` in `./e2e-tests/util.ts`
+    workers: 5,
+    fullyParallel: true,
+  });
 
 export default config;

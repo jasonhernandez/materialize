@@ -173,7 +173,15 @@ export const OryProviderWrapper = ({ children }: React.PropsWithChildren) => {
                     last: user.profile.family_name,
                   },
                 },
-                metadata_public: user.profile,
+                // The sync-server's OAuth2 token hook stamps the
+                // identity's metadata into ID-token claims, so the
+                // fallback session carries the real organization id and
+                // roles/permissions. The whole profile remains the
+                // metadata_public fallback for tokens issued before the
+                // hook existed.
+                metadata_public:
+                  user.profile.metadata_public ?? user.profile,
+                metadata_admin: user.profile.metadata_admin,
               },
             } as never) // Cast to satisfy OrySession type
           : null),

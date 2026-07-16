@@ -101,4 +101,3 @@ export function getOryUserManager(): UserManager {
 export function clearOryUserManager(): void {
   userManagerInstance = null;
 }
-
