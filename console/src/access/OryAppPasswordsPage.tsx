@@ -14,6 +14,7 @@
  * happens in AppPasswordRoutes based on the session's token issuer.
  */
 
+import { DeleteIcon } from "@chakra-ui/icons";
 import {
   Button,
   FormControl,
@@ -43,6 +44,7 @@ import { useForm } from "react-hook-form";
 import Alert from "~/components/Alert";
 import { AppErrorBoundary } from "~/components/AppErrorBoundary";
 import { SecretCopyableBox } from "~/components/copyableComponents";
+import DangerActionModal from "~/components/DangerActionModal";
 import { LoadingContainer } from "~/components/LoadingContainer";
 import { Modal } from "~/components/Modal";
 import {
@@ -65,21 +67,33 @@ const formatTime = (time: string | null | undefined) =>
   time ? formatDate(new Date(time), FRIENDLY_DATETIME_FORMAT_NO_SECONDS) : "-";
 
 const AppPasswordRow = ({ appPassword }: { appPassword: AppPassword }) => {
-  const { mutate: deleteAppPassword, isPending } = useDeleteAppPassword();
+  const { mutateAsync: deleteAppPassword } = useDeleteAppPassword();
+  const name = appPassword.name ?? appPassword.key_id;
   return (
-    <Tr>
-      <Td>{appPassword.name ?? appPassword.key_id}</Td>
+    <Tr aria-label={name}>
+      <Td>{name}</Td>
       <Td>{formatTime(appPassword.create_time)}</Td>
       <Td>{formatTime(appPassword.last_used_time)}</Td>
       <Td textAlign="right">
-        <Button
-          variant="outline"
+        <DangerActionModal
+          title="Delete app password"
+          aria-label="Delete app password"
+          colorScheme="red"
+          confirmIcon={<DeleteIcon />}
+          actionText=""
+          finalActionText="Delete"
+          confirmText={name}
+          onConfirm={async () => {
+            await deleteAppPassword({ keyId: appPassword.key_id });
+          }}
           size="sm"
-          isLoading={isPending}
-          onClick={() => deleteAppPassword({ keyId: appPassword.key_id })}
+          variant="outline"
         >
-          Remove
-        </Button>
+          <Text fontSize="sm">
+            Deleting this app password will revoke access to any devices or
+            services using it to connect to Materialize.
+          </Text>
+        </DangerActionModal>
       </Td>
     </Tr>
   );

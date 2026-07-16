@@ -17,13 +17,17 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { FetchSettingsFlow } from "~/external-library-wrappers/ory";
 import { Settings } from "~/external-library-wrappers/ory-elements";
 
-import { buildOryClientConfig, createOryFrontendApi } from "./oryConfig";
+import {
+  buildOryClientConfig,
+  createOryFrontendApi,
+  oryFlowUrls,
+} from "./oryConfig";
 
 export interface OrySettingsPageProps {
   /** Optional section to scroll to (e.g., "password", "totp", "webauthn") */
@@ -37,8 +41,10 @@ export const OrySettingsPage = ({ section }: OrySettingsPageProps) => {
   const [isLoading, setIsLoading] = useState(true);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  const oryClient = createOryFrontendApi();
-  const config = buildOryClientConfig();
+  // Memoized: fresh instances every render would change initializeFlow's
+  // identity and re-trigger the effect, looping the flow fetch forever.
+  const oryClient = useMemo(() => createOryFrontendApi(), []);
+  const config = useMemo(() => buildOryClientConfig(), []);
 
   // Get section from props or query params
   const targetSection = section || searchParams.get("section");
@@ -73,9 +79,22 @@ export const OrySettingsPage = ({ section }: OrySettingsPageProps) => {
     } catch (err) {
       console.error("Failed to initialize settings flow:", err);
 
-      // Check if user is not authenticated
-      if (err instanceof Error && err.message.includes("401")) {
-        setError("Please log in to access account settings.");
+      // A 401/403 (or a CORS-level fetch failure, which surfaces as an
+      // error with no `response`) means the Kratos session cookie was not
+      // sent — the console is on a different site than the Ory project
+      // (always the case on localhost; fixed in production by the custom
+      // auth domain). The hosted settings flow sees the cookie
+      // first-party, so hand off to it rather than dead-ending. The fetch
+      // client's ResponseError carries the status on err.response, not
+      // the message.
+      const response =
+        err && typeof err === "object" && "response" in err
+          ? (err.response as Response | undefined)
+          : undefined;
+      const status = response?.status;
+      if (status === 401 || status === 403 || response === undefined) {
+        window.location.assign(oryFlowUrls.settings());
+        return;
       } else {
         setError(
           err instanceof Error

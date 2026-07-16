@@ -6,7 +6,7 @@
  */
 
 import { Box, Center, Spinner, Text, VStack } from "@chakra-ui/react";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { persistProviderChoice } from "~/auth/detectAuthProvider";
@@ -36,8 +36,10 @@ export const OryRegistrationPage = ({
     searchParams.get("return_to") ||
     "/";
 
-  const oryClient = createOryFrontendApi();
-  const config = buildOryClientConfig();
+  // Memoized: fresh instances every render would change the identity of
+  // any callback that closes over them and re-trigger flow-fetch effects.
+  const oryClient = useMemo(() => createOryFrontendApi(), []);
+  const config = useMemo(() => buildOryClientConfig(), []);
 
   // Initialize or fetch the registration flow
   const initializeFlow = useCallback(async () => {
