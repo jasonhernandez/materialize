@@ -19,6 +19,7 @@ import retry, { AbortError } from "p-retry";
 import { Region } from "~/api/cloudGlobalApi";
 import { buildFronteggUrl } from "~/api/frontegg/index";
 import { type AuthProviderType } from "~/auth/detectAuthProvider";
+import { getCloudGlobalApiUrl } from "~/config/apiUrls";
 import { appConfig } from "~/config/AppConfig";
 
 /**
@@ -91,8 +92,14 @@ export const CONSOLE_ADDR = `${appConfig.consoleUrl.protocol}//${appConfig.conso
   appConfig.consoleUrl.port ? ":" + appConfig.consoleUrl.port : ""
 }`;
 
-export const IS_LOCAL_STACK =
-  appConfig.mode === "cloud" && appConfig.currentStack === "local";
+/**
+ * Stack override for runs against a personal stack (e.g.
+ * E2E_STACK=jason2.dev). The node-side stack detection only understands
+ * local/staging/production, and the browser needs the stack persisted
+ * (mz-current-stack) before the app boots — TestContext.start handles
+ * both when this is set.
+ */
+export const E2E_STACK = process.env.E2E_STACK;
 
 function buildRegions(stack: string): Region[] {
   if (stack === "local") {
@@ -128,14 +135,55 @@ export const NUM_PLAYWRIGHT_WORKERS = 5;
 // currentStack is only null in flexible deployment mode and our e2e tests
 // only run against mz cloud deployments.
 export const STACK =
-  appConfig.mode === "cloud" ? appConfig.currentStack : "local";
-export const REGIONS = buildRegions(STACK);
+  E2E_STACK ?? (appConfig.mode === "cloud" ? appConfig.currentStack : "local");
+export const IS_LOCAL_STACK = STACK === "local";
+/**
+ * Regions to exercise. Personal stacks typically deploy a single region,
+ * so they default to us-east-1; override with
+ * E2E_REGIONS="aws/us-east-1,aws/eu-west-1".
+ */
+const REGION_FILTER = process.env.E2E_REGIONS
+  ? process.env.E2E_REGIONS.split(",")
+  : ["local", "staging", "production"].includes(STACK)
+    ? null
+    : ["aws/us-east-1"];
+export const REGIONS = buildRegions(STACK).filter(
+  (r) => !REGION_FILTER || REGION_FILTER.includes(r.id),
+);
+export const CLOUD_GLOBAL_API_URL = getCloudGlobalApiUrl({
+  stack: STACK,
+  isImpersonation: false,
+});
 const e2eTenantStack = STACK === "local" ? "staging" : STACK;
 
-export const PASSWORD = getEnvVarOrFail(
-  "E2E_TEST_PASSWORD",
-  `Please set $E2E_TEST_PASSWORD on the environment; from the cloud repo, use 'pulumi stack output --stack materialize/${e2eTenantStack} --show-secrets console_e2e_test_password' to retrieve the value.`,
-);
+/**
+ * Lazily read so runs that only exercise the Ory provider don't require
+ * the Frontegg test password.
+ */
+function fronteggPassword(): string {
+  return getEnvVarOrFail(
+    "E2E_TEST_PASSWORD",
+    `Please set $E2E_TEST_PASSWORD on the environment; from the cloud repo, use 'pulumi stack output --stack materialize/${e2eTenantStack} --show-secrets console_e2e_test_password' to retrieve the value.`,
+  );
+}
+
+/**
+ * Credentials for the Ory auth-provider projects. There is no shared Ory
+ * test-tenant pool yet: runs point at a single pre-provisioned identity
+ * (for personal stacks see HANDOFF-ory-poc.md in the cloud repo).
+ */
+function oryCredentials(): { email: string; password: string } {
+  return {
+    email: getEnvVarOrFail(
+      "E2E_ORY_EMAIL",
+      "Please set $E2E_ORY_EMAIL to the Ory test identity's email.",
+    ),
+    password: getEnvVarOrFail(
+      "E2E_ORY_PASSWORD",
+      "Please set $E2E_ORY_PASSWORD to the Ory test identity's password.",
+    ),
+  };
+}
 
 /**
  * To prevent tests from trampling over each other, we need to ensure they
@@ -156,9 +204,18 @@ function getE2EIndex(stack: string): number {
   return e2eStartOffset + workerOffset;
 }
 
-export const EMAIL = `infra+cloud-integration-tests-${e2eTenantStack}-console-${getE2EIndex(
+const FRONTEGG_EMAIL = `infra+cloud-integration-tests-${e2eTenantStack}-console-${getE2EIndex(
   e2eTenantStack,
 )}@materialize.io`;
+
+/**
+ * The email the tests sign in with. Ory-only runs use the single Ory test
+ * identity; everything else uses the Frontegg test-tenant pool.
+ */
+export const EMAIL =
+  E2E_AUTH_PROVIDER === "ory" && process.env.E2E_ORY_EMAIL
+    ? process.env.E2E_ORY_EMAIL
+    : FRONTEGG_EMAIL;
 
 export const STATE_NAME = `e2e-tests/state-${process.env.TEST_PARALLEL_INDEX}.json`;
 
@@ -181,6 +238,31 @@ interface FronteggAuthResponse {
 }
 
 export type Options = Parameters<APIRequestContext["fetch"]>[1];
+
+function jwtPayload(token: string): Record<string, any> {
+  const parts = token.split(".");
+  assert(parts.length === 3, "expected a JWT");
+  return JSON.parse(Buffer.from(parts[1], "base64").toString("utf8"));
+}
+
+function isJwtExpired(token: string): boolean {
+  try {
+    const { exp } = jwtPayload(token);
+    if (!exp) return false;
+    // 30s buffer for clock skew.
+    return Date.now() >= exp * 1000 - 30_000;
+  } catch {
+    return true;
+  }
+}
+
+/** A refresh deadline halfway to the token's expiry. */
+function jwtHalfLife(token: string): Date {
+  const { exp } = jwtPayload(token);
+  const now = Date.now();
+  const expiresMs = exp ? exp * 1000 : now + 60 * 60 * 1000;
+  return new Date(now + Math.max(0, (expiresMs - now) / 2));
+}
 
 /** Manages an end-to-end test against Materialize Console. */
 export class TestContext {
@@ -214,32 +296,63 @@ export class TestContext {
     }
   }
 
+  /** The auth provider for the current Playwright project. */
+  get authProvider(): E2EAuthProvider {
+    return getProjectAuthProvider();
+  }
+
+  /** Whether this test runs against the Ory auth provider. */
+  get isOry(): boolean {
+    return this.authProvider === "ory";
+  }
+
   /** Start a new test. */
   static async start(page: Page, request: APIRequestContext) {
     const context = new TestContext(page, request);
     console.info("EMAIL=", EMAIL);
 
-    // Provide a clean slate for the test.
-    if (context.fronteggAPIEnabled) {
-      await context.setFronteggTenantBlockedStatus(false);
+    if (E2E_STACK) {
+      // Personal-stack runs: the console picks its stack from
+      // localStorage, which must exist before the app boots.
+      await page.addInitScript((stack) => {
+        window.localStorage.setItem("mz-current-stack", stack);
+      }, E2E_STACK);
     }
-    await context.disableAllRegions();
 
-    // Navigate to the home page && wait for that to load.
-    await context.goto(CONSOLE_ADDR);
+    // Provide a clean slate for the test.
+    if (context.isOry) {
+      // Ory has no resource-owner API grant: authenticate through the UI
+      // first so API calls (disableAllRegions) can reuse the browser
+      // session's token.
+      await context.goto(CONSOLE_ADDR);
+      await context.disableAllRegions();
+      await context.goto(CONSOLE_ADDR);
+    } else {
+      if (context.fronteggAPIEnabled) {
+        await context.setFronteggTenantBlockedStatus(false);
+      }
+      await context.disableAllRegions();
+
+      // Navigate to the home page && wait for that to load.
+      await context.goto(CONSOLE_ADDR);
+    }
     // We assume the first page is the onboarding survey
     await page.waitForSelector("[data-testid=onboarding-survey]");
     return context;
   }
 
   async signIn() {
+    if (this.isOry) {
+      await this.signInOry();
+      return;
+    }
     await this.page.waitForSelector("[data-test-id=input-identifier]", {
       timeout: FRONTEGG_LOADING_TIMEOUT,
     });
     await this.page.fill("[name=identifier]", EMAIL);
     await this.page.press("[name=identifier]", "Enter");
     await this.page.waitForSelector("[name=password]"); // wait for animation
-    await this.page.fill("[name=password]", PASSWORD);
+    await this.page.fill("[name=password]", fronteggPassword());
     this.page.press("[name=password]", "Enter");
     await this.waitForFronteggToLoad();
     await expect(
@@ -248,8 +361,73 @@ export class TestContext {
     await this.page.context().storageState({ path: STATE_NAME });
   }
 
+  /**
+   * Sign in through the Ory hosted login (identifier-first, two-step).
+   * Assumes the page has already been redirected to the hosted flow.
+   */
+  async signInOry() {
+    const { email, password } = oryCredentials();
+    await this.page.waitForURL(/oryapis\.com/, {
+      timeout: FRONTEGG_LOADING_TIMEOUT,
+    });
+    await this.page.waitForSelector(
+      'input[name="identifier"], input[name="password"]',
+      { state: "attached", timeout: FRONTEGG_LOADING_TIMEOUT },
+    );
+    // Returning-user flows carry the identifier as a hidden prefilled
+    // input and go straight to the password step.
+    const identifier = this.page.locator('input[name="identifier"]').first();
+    if (await identifier.isVisible().catch(() => false)) {
+      await identifier.fill(email);
+      await this.page.getByRole("button", { name: /continue/i }).click();
+    }
+    await this.page.waitForSelector('input[name="password"]');
+    await this.page.fill('input[name="password"]', password);
+    await this.page
+      .getByRole("button", { name: /sign in|continue|log in/i })
+      .first()
+      .click();
+    // The OAuth callback lands back on the console.
+    await this.waitForFronteggToLoad();
+    assert(
+      await this.captureOryTokenFromPage(),
+      "Ory sign-in did not produce an access token",
+    );
+    await this.page.context().storageState({ path: STATE_NAME });
+  }
+
+  /**
+   * Reads the console's Ory access token off the page, if it has a live
+   * one, and adopts it for API requests.
+   */
+  private async captureOryTokenFromPage(): Promise<string | null> {
+    const token = await this.page
+      .evaluate(() => window.sessionStorage.getItem("ory_access_token"))
+      .catch(() => null);
+    if (!token || isJwtExpired(token)) {
+      return null;
+    }
+    this.accessToken = token;
+    this.refreshDeadline = jwtHalfLife(token);
+    return token;
+  }
+
   async ensureAuthenticated() {
     if (new Date().getTime() < this.refreshDeadline.getTime()) {
+      return;
+    }
+
+    if (this.isOry) {
+      // Ory has no password grant; reuse the browser session's token,
+      // driving the UI sign-in if the page doesn't hold a live one.
+      if (await this.captureOryTokenFromPage()) {
+        return;
+      }
+      await this.goto(CONSOLE_ADDR);
+      assert(
+        await this.captureOryTokenFromPage(),
+        "Ory sign-in did not produce an access token",
+      );
       return;
     }
 
@@ -259,7 +437,7 @@ export class TestContext {
         this.request.post(authUrl, {
           data: {
             email: EMAIL,
-            password: PASSWORD,
+            password: fronteggPassword(),
           },
           timeout: 10 * 1000,
         }),
@@ -316,9 +494,20 @@ export class TestContext {
         await this.page.goto(urlWithAuth, gotoOptions);
         const result = await Promise.race([
           (async () => {
-            await this.page.waitForSelector("[data-test-id=input-identifier]", {
-              timeout: FRONTEGG_LOADING_TIMEOUT,
-            });
+            if (this.isOry) {
+              // Unauthenticated Ory sessions redirect to the hosted
+              // login on the Ory project domain.
+              await this.page.waitForURL(/oryapis\.com/, {
+                timeout: FRONTEGG_LOADING_TIMEOUT,
+              });
+            } else {
+              await this.page.waitForSelector(
+                "[data-test-id=input-identifier]",
+                {
+                  timeout: FRONTEGG_LOADING_TIMEOUT,
+                },
+              );
+            }
             return "login";
           })(),
           (async () => {
@@ -445,6 +634,15 @@ export class TestContext {
   }
 
   async getCurrentUser(): Promise<{ id: string; tenantId: string }> {
+    if (this.isOry) {
+      // The token hook stamps the organization into every issued token
+      // (top-level in ID tokens, under `ext` in access tokens).
+      await this.ensureAuthenticated();
+      const claims = jwtPayload(this.accessToken);
+      const tenantId = claims.organization_id ?? claims.ext?.organization_id;
+      assert(tenantId, "Ory token carries no organization_id claim");
+      return { id: claims.sub, tenantId };
+    }
     const response = await this.fronteggRequest(
       `/identity/resources/users/v2/me`,
     );
@@ -454,6 +652,13 @@ export class TestContext {
   }
 
   async listAllKeys() {
+    if (this.isOry) {
+      const response = await this.apiRequest(
+        `${CLOUD_GLOBAL_API_URL}/api/app-passwords`,
+      );
+      assert(response);
+      return response.json();
+    }
     const { id, tenantId } = await this.getCurrentUser();
     const response = await this.fronteggRequest(
       `/identity/resources/users/api-tokens/v1`,
@@ -469,6 +674,29 @@ export class TestContext {
   }
 
   async deleteAllKeysOlderThan(hours: number) {
+    if (this.isOry) {
+      const keys = await this.listAllKeys();
+      for (const k of keys) {
+        const created = k.create_time ? Date.parse(k.create_time) : NaN;
+        const age = new Date().getTime() - created;
+        if (!Number.isFinite(age) || age < hours * 60 * 60 * 1000) {
+          continue;
+        }
+        try {
+          await this.apiRequest(
+            `${CLOUD_GLOBAL_API_URL}/api/app-passwords/${k.key_id}`,
+            { method: "DELETE" },
+          );
+        } catch (e: unknown) {
+          const keyDoesNotExist =
+            e instanceof Error && e.message.includes("API Error 404");
+          if (!keyDoesNotExist) {
+            throw e;
+          }
+        }
+      }
+      return;
+    }
     const { id, tenantId } = await this.getCurrentUser();
     const userKeys = await this.listAllKeys();
     for (const k of userKeys) {

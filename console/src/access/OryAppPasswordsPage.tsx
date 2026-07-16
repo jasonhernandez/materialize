@@ -198,6 +198,7 @@ const OryAppPasswordsInner = ({
                       message: "Name must not exceed 256 characters.",
                     },
                   })}
+                  id="name"
                   autoFocus
                   placeholder="e.g. production-dashboard"
                   size="sm"

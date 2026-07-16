@@ -21,16 +21,29 @@ import { Client } from "pg";
 
 import { Region } from "~/api/cloudGlobalApi";
 
-import { CONSOLE_ADDR, EMAIL, REGIONS, STATE_NAME, TestContext } from "./util";
+import {
+  CONSOLE_ADDR,
+  EMAIL,
+  getProjectAuthProvider,
+  REGIONS,
+  STATE_NAME,
+  TestContext,
+} from "./util";
 
 const test = base.extend<{
   testContext: TestContext;
 }>({
-  testContext: async ({ page, request }, use) => {
-    const ctx = await TestContext.start(page, request);
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    await use(ctx);
-  },
+  testContext: [
+    async ({ page, request }, use) => {
+      const ctx = await TestContext.start(page, request);
+      // eslint-disable-next-line react-hooks/rules-of-hooks
+      await use(ctx);
+    },
+    // Setup exceeds the 30s default test timeout: it disables regions
+    // (up to 5min of ALB retries) and, under the Ory provider, drives a
+    // full UI sign-in first.
+    { timeout: 10 * 60 * 1000 },
+  ],
 });
 
 test.beforeEach(async ({ page }) => {
@@ -75,8 +88,11 @@ async function reactSelectOption(page: Page, elementId: string, value: string) {
 
 const TEST_TIMEOUT = 30 * 60 * 1000;
 const ENABLE_REGION_TIMEOUT = 60 * 1000;
-// Region provisioning can take several minutes on production (e.g. aws/eu-west-1).
-const REGION_READY_TIMEOUT = 10 * 60 * 1000;
+// Region provisioning can take several minutes on production (e.g.
+// aws/eu-west-1), and longer on cold personal stacks where nodes scale up
+// from zero — override with E2E_REGION_READY_TIMEOUT_MS there.
+const REGION_READY_TIMEOUT =
+  parseInt(process.env.E2E_REGION_READY_TIMEOUT_MS ?? "", 10) || 10 * 60 * 1000;
 
 for (const region of REGIONS) {
   test(`use region ${region.id}`, async ({ page, request, testContext }) => {
@@ -90,28 +106,44 @@ for (const region of REGIONS) {
     await context.deleteAllKeysOlderThan(2);
 
     // Create api key
-    await context.goto(`${CONSOLE_ADDR}/access`);
     console.log("Creating app password", apiKeyName);
-    const appPasswordLink = page.getByRole("link", {
-      name: "App Password",
-      exact: true,
-    });
-    // Clicking "Create new" opens a Chakra popover. Under WebKit in CI the
-    // click occasionally lands before the popover is wired up, so the menu
-    // never opens and the "App Password" entry never appears. Retry clicking
-    // until the popover is actually open.
-    await expect(async () => {
-      await page.getByRole("button", { name: "Create new" }).click();
-      await expect(appPasswordLink).toBeVisible({ timeout: 2_000 });
-    }).toPass({ timeout: 30_000 });
-    await appPasswordLink.click();
-    await page.getByRole("dialog", { name: "New app password" }).waitFor();
-    await page.getByRole("textbox", { name: "Name" }).fill(apiKeyName);
-    await page.getByRole("button", { name: "Create password" }).click();
-    await page.getByText(`New password "${apiKeyName}"`).waitFor();
-    await page.getByRole("button", { name: "visibility" }).first().click();
-    const passwordField = page.getByLabel("clientId");
-    const password = await passwordField.evaluate((e) => e.textContent);
+    let password: string | null;
+    if (getProjectAuthProvider() === "ory") {
+      // Ory-backed orgs use OryAppPasswordsPage (Talos-backed via the
+      // cloud global API): a direct "New app password" button instead of
+      // the Frontegg page's "Create new" popover.
+      await context.goto(`${CONSOLE_ADDR}/access/app-passwords`);
+      await page.getByRole("button", { name: "New app password" }).click();
+      await page.getByRole("dialog", { name: "New app password" }).waitFor();
+      await page.getByRole("textbox", { name: "Name" }).fill(apiKeyName);
+      await page.getByRole("button", { name: "Create app password" }).click();
+      await page.getByText(`New app password "${apiKeyName}"`).waitFor();
+      await page.getByRole("button", { name: "visibility" }).first().click();
+      const passwordField = page.getByLabel("app password", { exact: true });
+      password = await passwordField.evaluate((e) => e.textContent);
+    } else {
+      await context.goto(`${CONSOLE_ADDR}/access`);
+      const appPasswordLink = page.getByRole("link", {
+        name: "App Password",
+        exact: true,
+      });
+      // Clicking "Create new" opens a Chakra popover. Under WebKit in CI the
+      // click occasionally lands before the popover is wired up, so the menu
+      // never opens and the "App Password" entry never appears. Retry clicking
+      // until the popover is actually open.
+      await expect(async () => {
+        await page.getByRole("button", { name: "Create new" }).click();
+        await expect(appPasswordLink).toBeVisible({ timeout: 2_000 });
+      }).toPass({ timeout: 30_000 });
+      await appPasswordLink.click();
+      await page.getByRole("dialog", { name: "New app password" }).waitFor();
+      await page.getByRole("textbox", { name: "Name" }).fill(apiKeyName);
+      await page.getByRole("button", { name: "Create password" }).click();
+      await page.getByText(`New password "${apiKeyName}"`).waitFor();
+      await page.getByRole("button", { name: "visibility" }).first().click();
+      const passwordField = page.getByLabel("clientId");
+      password = await passwordField.evaluate((e) => e.textContent);
+    }
     assert(!!password, "Expected a password to be created");
     const appPasswords = await context.listAllKeys();
     console.log("app passwords now", appPasswords);
@@ -201,33 +233,51 @@ for (const region of REGIONS) {
       { retries: 5 },
     );
 
-    // Step through the onboarding guide
-    await page
-      .getByRole("link", { name: /get to know materialize →/i })
-      .click();
-    await page
-      .getByRole("link", { name: /the materialize ecosystem →/i })
-      .click();
-    await page
-      .getByRole("link", { name: /learn about incremental updates →/i })
-      .click();
-    await page
-      .getByRole("link", { name: /integrate with your data stack →/i })
-      .click();
-    await page.getByRole("link", { name: /open console →/i }).click({
-      // This button will be disabled until the region is fully provisioned,
-      // which can take several minutes in production.
-      timeout: REGION_READY_TIMEOUT,
-    });
-    await expect(page.getByTestId("shell")).toBeVisible();
+    if (getProjectAuthProvider() === "ory") {
+      // TODO(ory-migration): the console only reports an environment
+      // healthy after a successful SQL query against environmentd, and
+      // environmentd does not accept Ory-issued tokens yet (the Talos
+      // derive authenticator in the materialize repo, design doc §App
+      // passwords). Until that lands, "Open console →" never enables for
+      // Ory orgs, so stop at region activation.
+      console.log(
+        "Ory provider: skipping shell verification until environmentd accepts Ory tokens",
+      );
+    } else {
+      // Step through the onboarding guide
+      await page
+        .getByRole("link", { name: /get to know materialize →/i })
+        .click();
+      await page
+        .getByRole("link", { name: /the materialize ecosystem →/i })
+        .click();
+      await page
+        .getByRole("link", { name: /learn about incremental updates →/i })
+        .click();
+      await page
+        .getByRole("link", { name: /integrate with your data stack →/i })
+        .click();
+      await page.getByRole("link", { name: /open console →/i }).click({
+        // This button will be disabled until the region is fully provisioned,
+        // which can take several minutes in production.
+        timeout: REGION_READY_TIMEOUT,
+      });
+      await expect(page.getByTestId("shell")).toBeVisible();
 
-    // Close welcome dialog
-    await page.getByTestId("welcome-dialog-close-button").click();
+      // Close welcome dialog
+      await page.getByTestId("welcome-dialog-close-button").click();
 
-    await testPlatformEnvironment(page, request, password);
+      await testPlatformEnvironment(page, request, password);
+    }
 
     //// Delete api key
-    await context.goto(`${CONSOLE_ADDR}/access`);
+    // Both providers' pages render the key row with aria-label=<name> and
+    // a type-to-confirm "Delete app password" modal.
+    await context.goto(
+      getProjectAuthProvider() === "ory"
+        ? `${CONSOLE_ADDR}/access/app-passwords`
+        : `${CONSOLE_ADDR}/access`,
+    );
     await page.click(
       `[aria-label='${apiKeyName}'] [aria-label='Delete app password']`,
     );

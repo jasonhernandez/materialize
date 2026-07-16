@@ -18,6 +18,9 @@ import { E2EAuthProvider } from "./e2e-tests/util";
 // We use module-alias rather than tsconfig.json's compilerOptions.paths because I couldn't get it to resolve correctly.
 addAliases({
   "~/config/importAppConfig": "__mocks__/importAppConfig",
+  // oryUrls reads Vite's import.meta.env, which Playwright's CJS
+  // transpilation cannot execute; the mock reads process.env instead.
+  "~/config/oryUrls": "__mocks__/oryUrls",
 });
 
 /**
