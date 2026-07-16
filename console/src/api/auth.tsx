@@ -20,6 +20,7 @@ import {
   type ITenantsResponse,
   type User,
 } from "~/external-library-wrappers/frontegg";
+import type { OrySession } from "~/external-library-wrappers/ory";
 import { useFlags } from "~/hooks/useFlags";
 
 import { buildGlobalQueryKey } from "./buildQueryKeySchema";
@@ -82,6 +83,132 @@ export function hasInvoiceReadPermission(
 
 export function isSuperUser(user: User | null): boolean {
   return !!user && Boolean(user.roles.find((r) => r.key === ADMIN_ROLE_KEY));
+}
+
+// ============================================================================
+// Ory Session Permission Helpers
+// ============================================================================
+// These functions extract permissions from Ory session metadata.
+// Permissions are stored in identity.metadata_admin.permissions[]
+// Roles are stored in identity.metadata_admin.roles[]
+// Tenant ID is stored in identity.metadata_public.tenant_id
+
+/**
+ * Extract a permission from an Ory session's identity metadata.
+ * Ory stores permissions in identity.metadata_admin.permissions[]
+ */
+export function extractOryPermission(
+  session: OrySession | null,
+  permission: string,
+): boolean {
+  if (!session?.identity) return false;
+  const metadata = session.identity.metadata_admin as Record<string, unknown>;
+  const permissions = (metadata?.permissions as string[]) ?? [];
+  return permissions.includes(permission);
+}
+
+/**
+ * Extract all roles from an Ory session.
+ */
+export function extractOryRoles(session: OrySession | null): string[] {
+  if (!session?.identity) return [];
+  const metadata = session.identity.metadata_admin as Record<string, unknown>;
+  return (metadata?.roles as string[]) ?? [];
+}
+
+/**
+ * Extract all permissions from an Ory session.
+ */
+export function extractOryPermissions(session: OrySession | null): string[] {
+  if (!session?.identity) return [];
+  const metadata = session.identity.metadata_admin as Record<string, unknown>;
+  return (metadata?.permissions as string[]) ?? [];
+}
+
+/**
+ * Extract tenant ID from an Ory session.
+ *
+ * The sync-server registration prehook (and the migration import path)
+ * stamp the Materialize organization id as
+ * `metadata_public.organization_id`; `tenant_id` is the legacy fallback
+ * key.
+ */
+export function extractOryTenantId(session: OrySession | null): string | null {
+  if (!session?.identity) return null;
+  const metadata = session.identity.metadata_public as Record<string, unknown>;
+  return (
+    (metadata?.organization_id as string) ??
+    (metadata?.tenant_id as string) ??
+    null
+  );
+}
+
+/**
+ * Extract user email from an Ory session.
+ */
+export function extractOryEmail(session: OrySession | null): string | null {
+  if (!session?.identity) return null;
+  const traits = session.identity.traits as Record<string, unknown>;
+  return (traits?.email as string) ?? null;
+}
+
+/**
+ * Extract user name from an Ory session.
+ */
+export function extractOryName(session: OrySession | null): string | null {
+  if (!session?.identity) return null;
+  const traits = session.identity.traits as Record<string, unknown>;
+  const name = traits?.name as { first?: string; last?: string } | undefined;
+  if (!name) return null;
+  return [name.first, name.last].filter(Boolean).join(" ") || null;
+}
+
+/**
+ * Check if Ory user has environment read permission.
+ */
+export function hasOryEnvironmentReadPermission(
+  session: OrySession | null,
+): boolean {
+  return extractOryPermission(session, "materialize.environment.read");
+}
+
+/**
+ * Check if Ory user has environment write permission.
+ */
+export function hasOryEnvironmentWritePermission(
+  session: OrySession | null,
+): boolean {
+  return extractOryPermission(session, "materialize.environment.write");
+}
+
+/**
+ * Check if Ory user has invoice read permission.
+ */
+export function hasOryInvoiceReadPermission(
+  session: OrySession | null,
+): boolean {
+  return extractOryPermission(session, "materialize.invoice.read");
+}
+
+/**
+ * Check if Ory user is a super user (has admin role).
+ */
+export function isOrySuperUser(session: OrySession | null): boolean {
+  const roles = extractOryRoles(session);
+  return roles.includes(ADMIN_ROLE_KEY);
+}
+
+/**
+ * Check if Ory user has tenant API token permissions.
+ */
+export function hasOryTenantApiTokenPermissions(
+  session: OrySession | null,
+): boolean {
+  return [
+    "fe.secure.read.tenantApiTokens",
+    "fe.secure.write.tenantApiTokens",
+    "fe.secure.delete.tenantApiTokens",
+  ].every((permission) => extractOryPermission(session, permission));
 }
 
 export function getCurrentTenant(

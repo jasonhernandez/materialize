@@ -41,6 +41,7 @@ import {
 } from "~/external-library-wrappers/frontegg";
 import { type AuthContextProps } from "~/external-library-wrappers/oidc";
 import { AUTH_ROUTES } from "~/fronteggRoutes";
+import { useOryAuth } from "~/hooks/useOryAuth";
 import { useSelfManagedProfile } from "~/hooks/useSelfManagedProfile";
 import { NAV_HORIZONTAL_SPACING, NAV_HOVER_STYLES } from "~/layouts/constants";
 import docUrls from "~/mz-doc-urls.json";
@@ -100,17 +101,23 @@ const UserInfoMenuItem = () => {
     <AppConfigSwitch
       cloudConfigElement={({ runtimeConfig }) => {
         if (runtimeConfig.isImpersonating) return null;
-        const { user, auth, authActions } = runtimeConfig;
+        const { user } = runtimeConfig;
         return (
           <>
             <UserInfoHeaderBlock name={user?.name} email={user?.email} />
             <MenuDivider />
-            <OrganizationMenuGroup
-              user={user}
-              authState={auth}
-              authActions={authActions}
-            />
-            <MenuDivider />
+            {/* Tenant switching is Frontegg-only; Ory users have a single
+                organization (multi-org support TBD in the migration). */}
+            {runtimeConfig.authProvider === "frontegg" && (
+              <>
+                <OrganizationMenuGroup
+                  user={user}
+                  authState={runtimeConfig.auth}
+                  authActions={runtimeConfig.authActions}
+                />
+                <MenuDivider />
+              </>
+            )}
           </>
         );
       }}
@@ -181,11 +188,28 @@ const OidcSignOutMenuItem = ({ auth }: { auth: AuthContextProps }) => {
   );
 };
 
+/** Sign-out item for Ory users: ends the OAuth session via the Ory
+ * provider instead of navigating to the Frontegg logout route. */
+const OrySignOutMenuItem = () => {
+  const { logout: oryLogout } = useOryAuth();
+  return (
+    <>
+      <MenuDivider />
+      <MenuItem fontWeight="medium" onClick={() => oryLogout()}>
+        Sign out
+      </MenuItem>
+    </>
+  );
+};
+
 const SignOutMenuItem = () => {
   return (
     <AppConfigSwitch
-      cloudConfigElement={({ runtimeConfig: { isImpersonating } }) => {
-        if (isImpersonating) return null;
+      cloudConfigElement={({ runtimeConfig }) => {
+        if (runtimeConfig.isImpersonating) return null;
+        if (runtimeConfig.authProvider === "ory") {
+          return <OrySignOutMenuItem />;
+        }
         return (
           <>
             <MenuDivider />
@@ -366,7 +390,7 @@ const ProfileDropdown = ({
             return (
               <>
                 <MenuDivider />
-                <ProfileMenuItems />
+                <ProfileMenuItems authProvider={runtimeConfig.authProvider} />
               </>
             );
           }}
@@ -459,12 +483,22 @@ const OrganizationMenuGroup = ({
   );
 };
 
-export const ProfileMenuItems = () => {
+export const ProfileMenuItems = ({
+  authProvider = "frontegg",
+}: {
+  authProvider?: "frontegg" | "ory";
+}) => {
   return (
     <VStack spacing={0} width="100%">
-      <MenuItem fontWeight="medium" onClick={() => AdminPortal.show()}>
-        Account settings
-      </MenuItem>
+      {authProvider === "ory" ? (
+        <MenuItem fontWeight="medium" as={RouterLink} to="/auth/ory/settings">
+          Account settings
+        </MenuItem>
+      ) : (
+        <MenuItem fontWeight="medium" onClick={() => AdminPortal.show()}>
+          Account settings
+        </MenuItem>
+      )}
       <PricingMenuItem />
     </VStack>
   );

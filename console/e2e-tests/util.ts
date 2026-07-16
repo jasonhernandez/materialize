@@ -13,12 +13,71 @@ import assert from "node:assert";
 // in our wrapper and don't need to mock these in our e2e tests either.
 // eslint-disable-next-line no-restricted-imports
 import { FronteggAuthenticator, HttpClient } from "@frontegg/client";
-import { APIRequestContext, expect, Page } from "@playwright/test";
+import { APIRequestContext, expect, Page, test } from "@playwright/test";
 import retry, { AbortError } from "p-retry";
 
 import { Region } from "~/api/cloudGlobalApi";
 import { buildFronteggUrl } from "~/api/frontegg/index";
+import { type AuthProviderType } from "~/auth/detectAuthProvider";
 import { appConfig } from "~/config/AppConfig";
+
+/**
+ * E2E auth provider options:
+ * - "frontegg": Force Frontegg authentication
+ * - "ory": Force Ory authentication
+ * - "auto": Don't force a provider, let detection logic run
+ */
+export type E2EAuthProvider = AuthProviderType | "auto";
+
+/**
+ * Default auth provider for E2E tests (used when not running in a Playwright project context).
+ * Prefer using getProjectAuthProvider() inside tests to get the project-specific provider.
+ */
+export const E2E_AUTH_PROVIDER: E2EAuthProvider =
+  (process.env.E2E_AUTH_PROVIDER as E2EAuthProvider) || "frontegg";
+
+/**
+ * Get the auth provider for the current test project.
+ * This reads from the project's `use.authProvider` config set in playwright.config.ts.
+ * Falls back to E2E_AUTH_PROVIDER env var if not in a project context.
+ *
+ * Must be called from within a test or test hook (where test.info() is available).
+ */
+export function getProjectAuthProvider(): E2EAuthProvider {
+  try {
+    const projectUse = test.info().project.use as {
+      authProvider?: E2EAuthProvider;
+    };
+    if (projectUse?.authProvider) {
+      return projectUse.authProvider;
+    }
+  } catch {
+    // test.info() not available outside test context
+  }
+  return E2E_AUTH_PROVIDER;
+}
+
+/**
+ * Appends auth_provider parameter to a URL to force a specific auth provider.
+ * If provider is "auto", returns the URL unchanged to test detection logic.
+ */
+export function withAuthProvider(
+  url: string,
+  provider: E2EAuthProvider = E2E_AUTH_PROVIDER,
+): string {
+  // "auto" mode: don't add auth_provider param, let detection run
+  if (provider === "auto") {
+    return url;
+  }
+
+  const urlObj = new URL(url, "http://localhost");
+  urlObj.searchParams.set("auth_provider", provider);
+  // Return just the path + search if it was a relative URL
+  if (!url.startsWith("http")) {
+    return urlObj.pathname + urlObj.search;
+  }
+  return urlObj.toString();
+}
 
 function getEnvVarOrFail(varName: string, errorMessage: string): string {
   const value = process.env[varName];
@@ -240,11 +299,21 @@ export class TestContext {
   /**
    * Visits a given url, signs in if necessary.
    * Sometimes frontegg just seems to hang, so we also retry on all failures.
+   *
+   * By default, adds ?auth_provider parameter based on the current test project's
+   * auth provider configuration (set in playwright.config.ts).
    */
-  async goto(url: string, options?: Parameters<Page["goto"]>[1]) {
+  async goto(
+    url: string,
+    options?: Parameters<Page["goto"]>[1] & { authProvider?: E2EAuthProvider },
+  ) {
+    const { authProvider = getProjectAuthProvider(), ...gotoOptions } =
+      options || {};
+    const urlWithAuth = withAuthProvider(url, authProvider);
+
     return retry(
       async () => {
-        await this.page.goto(url, options);
+        await this.page.goto(urlWithAuth, gotoOptions);
         const result = await Promise.race([
           (async () => {
             await this.page.waitForSelector("[data-test-id=input-identifier]", {

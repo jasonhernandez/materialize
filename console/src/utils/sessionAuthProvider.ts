@@ -16,6 +16,7 @@
  */
 
 import { getAccessToken } from "~/api/fronteggToken";
+import { getOryAccessToken } from "~/api/oryToken";
 
 export type SessionAuthProvider = "frontegg" | "ory";
 
@@ -36,7 +37,11 @@ export function decodeTokenIssuer(token: string): string | undefined {
 }
 
 export function getSessionAuthProvider(): SessionAuthProvider {
-  const token = getAccessToken();
+  // Ory sessions keep their token in the Ory store (sessionStorage), not
+  // Frontegg's ContextHolder; check it first. The issuer check below
+  // still applies either way — an expired/foreign token in the Ory store
+  // falls through to Frontegg.
+  const token = getOryAccessToken() ?? getAccessToken();
   if (!token) return "frontegg";
   const issuer = decodeTokenIssuer(token);
   if (issuer) {

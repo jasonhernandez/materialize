@@ -30,5 +30,6 @@
       }
     ],
     "types": ["vite/client", "vitest/globals"]
-  }
+  },
+  "exclude": ["elements"]
 }

@@ -9,6 +9,7 @@
 
 import * as Sentry from "@sentry/react";
 
+import { isOryProviderActive } from "~/auth/detectAuthProvider";
 import {
   AppConfig,
   appConfig as appConfigSingleton,
@@ -23,6 +24,7 @@ import { MzOidcUserManager } from "~/external-library-wrappers/oidc";
 import { readAuthErrorDetail } from "~/utils/oidcAuth";
 
 import { logoutAndRedirect } from "./materialize/auth";
+import { getOryAccessToken } from "./oryToken";
 import {
   HttpScheme,
   MaterializeAuthConfig,
@@ -144,8 +146,16 @@ interface ICloudApiClient {
 
 interface IFronteggApiClient {
   isImpersonating: false;
+  authProvider: "frontegg";
   // The base path for the Frontegg API.
   fronteggApiBasePath: string;
+}
+
+interface IOryApiClient {
+  isImpersonating: false;
+  authProvider: "ory";
+  // The base URL for the Ory project.
+  oryProjectUrl: string;
 }
 
 interface IImpersonationApiClient {
@@ -323,6 +333,7 @@ export class CloudApiClient
   fronteggApiBasePath: string;
   type = "cloud" as const;
   isImpersonating = false as const;
+  authProvider = "frontegg" as const;
   mzHttpUrlScheme: HttpScheme;
   mzWebsocketUrlScheme: WebsocketScheme;
 
@@ -335,6 +346,13 @@ export class CloudApiClient
   }
 
   #getAccessToken() {
+    // Dual-provider: when an Ory session is active, API calls carry the
+    // Ory token. Checked per call because this client is a module-level
+    // singleton constructed before auth-provider detection completes.
+    if (isOryProviderActive()) {
+      return getOryAccessToken();
+    }
+
     // Get the access token from Frontegg's context holder
     const accessToken = ContextHolder.for("default").getAccessToken();
 
@@ -345,6 +363,77 @@ export class CloudApiClient
         level: "error",
         category: "auth",
         message: "Failed to refresh auth token",
+      });
+    }
+    return accessToken;
+  }
+
+  #authMiddleware: Middleware = (next) => {
+    return async (...fetchArgs) => {
+      const [input, options = {}] = fetchArgs;
+      const accessToken = this.#getAccessToken();
+
+      const headers = copyHeaders(fetchArgs);
+      if (accessToken) {
+        headers.set("Authorization", `Bearer ${accessToken}`);
+        if (this.#appConfig.sentryConfig?.release) {
+          Object.entries(
+            buildConsoleVersionHeaders(this.#appConfig.sentryConfig?.release),
+          ).forEach(([key, value]) => {
+            headers.set(key, value);
+          });
+        }
+      }
+
+      const request = new Request(input, { ...options, headers });
+      return next(request);
+    };
+  };
+
+  mzApiFetch = withMiddleware(globalFetch, this.#authMiddleware);
+  cloudApiFetch = this.mzApiFetch;
+
+  getWsAuthConfig = () => buildTokenAuthConfig(this.#getAccessToken() ?? "");
+}
+
+/**
+ * API client for Ory-authenticated cloud users.
+ *
+ * Similar to CloudApiClient but uses Ory OAuth2 tokens instead of Frontegg tokens.
+ * Used when authProviderAtom is set to "ory".
+ *
+ * TODO(ory-migration): This client will be used once Ory OAuth2 flow is implemented.
+ * Currently a stub that mirrors CloudApiClient structure.
+ */
+export class OryCloudApiClient
+  implements IApiClientBase, ICloudApiClient, IOryApiClient
+{
+  #appConfig: Readonly<CloudAppConfig>;
+  cloudGlobalApiBasePath: string;
+  oryProjectUrl: string;
+  type = "cloud" as const;
+  isImpersonating = false as const;
+  authProvider = "ory" as const;
+  mzHttpUrlScheme: HttpScheme;
+  mzWebsocketUrlScheme: WebsocketScheme;
+
+  constructor({ appConfig }: { appConfig: Readonly<CloudAppConfig> }) {
+    this.#appConfig = appConfig;
+    this.cloudGlobalApiBasePath = this.#appConfig.cloudGlobalApiUrl;
+    this.oryProjectUrl = this.#appConfig.oryProjectUrl;
+    this.mzHttpUrlScheme = this.#appConfig.environmentdScheme;
+    this.mzWebsocketUrlScheme = this.#appConfig.environmentdWebsocketScheme;
+  }
+
+  #getAccessToken() {
+    // Get the access token from Ory session storage
+    const accessToken = getOryAccessToken();
+
+    if (!accessToken) {
+      Sentry.addBreadcrumb({
+        level: "error",
+        category: "auth",
+        message: "Failed to get Ory access token",
       });
     }
     return accessToken;

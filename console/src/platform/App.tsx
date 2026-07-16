@@ -12,6 +12,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { BrowserRouter } from "react-router-dom";
 
+import { AuthProviderWrapper } from "~/auth/AuthProviderWrapper";
 import { AppErrorBoundary } from "~/components/AppErrorBoundary";
 import { ChakraProviderWrapper } from "~/components/ChakraProviderWrapper";
 import { DevtoolsContainer } from "~/components/DevtoolsContainer";
@@ -19,6 +20,7 @@ import { FronteggProviderWrapper } from "~/components/FronteggProviderWrapper";
 import { IntercomAnonymousContainer } from "~/components/IntercomAnonymousContainer";
 import LoadingScreen from "~/components/LoadingScreen";
 import { OidcProviderWrapper } from "~/components/OidcProviderWrapper";
+import { OryProviderWrapper } from "~/components/OryProviderWrapper";
 import { useAppConfig } from "~/config/useAppConfig";
 import { JotaiProviderWrapper } from "~/layouts/JotaiProviderWrapper";
 import { getQueryClient } from "~/queryClient";
@@ -56,7 +58,10 @@ export const App = () => {
                 <QueryClientProvider client={getQueryClient()}>
                   <DevtoolsContainer />
                   <IntercomAnonymousContainer />
-                  <FronteggProviderWrapper>
+                  <AuthProviderWrapper
+                    FronteggWrapper={FronteggProviderWrapper}
+                    OryWrapper={OryProviderWrapper}
+                  >
                     <OidcProviderWrapper>
                       <AppErrorBoundary containerProps={{ height: "100vh" }}>
                         <React.Suspense fallback={<LoadingScreen />}>
@@ -64,7 +69,7 @@ export const App = () => {
                         </React.Suspense>
                       </AppErrorBoundary>
                     </OidcProviderWrapper>
-                  </FronteggProviderWrapper>
+                  </AuthProviderWrapper>
                 </QueryClientProvider>
               </AppErrorBoundary>
             </ChakraProviderWrapper>

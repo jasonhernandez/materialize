@@ -34,6 +34,11 @@ import { getConsoleEnvironment } from "./consoleEnvironment";
 import { getCurrentStack } from "./currentStack";
 import { getEnvironmentdConfig } from "./environment";
 import { getImpersonatedEnvironment } from "./impersonation";
+import {
+  getOryJwkUrl,
+  getOryOAuth2ClientId,
+  getOryProjectUrl,
+} from "./oryUrls";
 
 const appConfigJson = importAppConfig();
 // Message used to indicate that a feature is not supported in the current deployment mode. Usually thrown as an error.
@@ -65,11 +70,13 @@ export type SelfManagedAppMode = "self-managed";
 export type AppMode = CloudAppMode | SelfManagedAppMode;
 
 type FronteggAuthMode = "Frontegg";
+type OryAuthMode = "Ory";
 type PasswordAuthMode = "Password";
 type NoneAuthMode = "None";
 type SaslAuthMode = "Sasl";
 type OidcAuthMode = "Oidc";
-type CloudAuthMode = FronteggAuthMode;
+// CloudAuthMode supports both Frontegg and Ory during migration
+export type CloudAuthMode = FronteggAuthMode | OryAuthMode;
 export type SelfManagedAuthMode =
   | PasswordAuthMode
   | NoneAuthMode
@@ -78,6 +85,7 @@ export type SelfManagedAuthMode =
 
 type AuthMode =
   | FronteggAuthMode
+  | OryAuthMode
   | PasswordAuthMode
   | NoneAuthMode
   | SaslAuthMode
@@ -117,6 +125,12 @@ export class CloudAppConfig implements IBaseAppConfig {
 
   // Frontegg API URL for the current environment.
   fronteggUrl = getFronteggUrl(this.currentStack);
+
+  // Ory Network configuration (used when authMode === "Ory")
+  // These are populated even when Frontegg is active, to support dual-auth detection
+  oryProjectUrl = getOryProjectUrl(this.currentStack);
+  oryOAuth2ClientId = getOryOAuth2ClientId(this.currentStack);
+  oryJwkUrl = getOryJwkUrl(this.currentStack);
 
   // Region and environment details used during user organization impersonation.
   // Value is null during normal console usage
