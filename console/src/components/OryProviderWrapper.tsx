@@ -35,6 +35,11 @@ export const OryProviderWrapper = ({ children }: React.PropsWithChildren) => {
   const isCallbackRoute =
     window.location.pathname.startsWith("/auth/ory/callback") ||
     window.location.pathname === "/callback";
+  // Routes that must render for users with NO account or session — the
+  // org-invite acceptance page registers the user itself. Auto-initiating
+  // login here would bounce the invitee to a sign-in they cannot complete.
+  const isUnauthenticatedFlowRoute =
+    isCallbackRoute || window.location.pathname === "/auth/invite";
 
   // Initialize and check for existing user
   useEffect(() => {
@@ -66,8 +71,8 @@ export const OryProviderWrapper = ({ children }: React.PropsWithChildren) => {
               whoamiErr,
             );
           }
-        } else if (!isCallbackRoute) {
-          // No valid user and not on callback - initiate login
+        } else if (!isUnauthenticatedFlowRoute) {
+          // No valid user and not on a flow route - initiate login
           // Store current location for redirect after login
           const returnTo = window.location.pathname + window.location.search;
           sessionStorage.setItem("ory_return_to", returnTo);
@@ -86,7 +91,7 @@ export const OryProviderWrapper = ({ children }: React.PropsWithChildren) => {
     };
 
     checkUser();
-  }, [isCallbackRoute]);
+  }, [isUnauthenticatedFlowRoute]);
 
   // Track sign-ins completed after mount: OryCallback finishes the code
   // exchange via the same UserManager, which fires userLoaded — without
@@ -175,8 +180,7 @@ export const OryProviderWrapper = ({ children }: React.PropsWithChildren) => {
                 // roles/permissions. The whole profile remains the
                 // metadata_public fallback for tokens issued before the
                 // hook existed.
-                metadata_public:
-                  user.profile.metadata_public ?? user.profile,
+                metadata_public: user.profile.metadata_public ?? user.profile,
                 metadata_admin: user.profile.metadata_admin,
               },
             } as never) // Cast to satisfy OrySession type

@@ -31,6 +31,10 @@ export function createOryFrontendApi(): FetchFrontendApi {
   const config = new FetchConfiguration({
     basePath: getOryBaseUrl(),
     credentials: "include", // Include cookies for session management
+    // Without an explicit JSON accept, Kratos treats self-service flow
+    // requests as page loads and 303s to the hosted UI — which an SPA's
+    // cross-origin fetch cannot follow (CORS). We always want flow JSON.
+    headers: { Accept: "application/json" },
   });
   return new FetchFrontendApi(config);
 }

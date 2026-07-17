@@ -117,7 +117,7 @@ describe("OryMembersPage", () => {
 
       const linkBox = screen.getByLabelText("Invite link");
       expect(linkBox).toHaveTextContent(
-        `${window.location.origin}${INVITE_ACCEPT_PATH}?token=shiny-new-token`,
+        `${window.location.origin}${INVITE_ACCEPT_PATH}?auth_provider=ory&token=shiny-new-token`,
       );
       // The invite is link-only; the UI must say so and show the expiry.
       expect(

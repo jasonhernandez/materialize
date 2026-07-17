@@ -32,18 +32,19 @@ export type OrganizationMember = components["schemas"]["OrganizationMember"];
 export type OrganizationInvite = components["schemas"]["CreateInviteResponse"];
 
 /**
- * Console route that will accept an invite token.
- *
- * TODO(ory-migration): acceptance-side routing for this path does not
- * exist yet; invites created today can only be redeemed once that flow
- * ships. Keep this constant in sync with the acceptance route when it
- * lands.
+ * Console route that accepts an invite token
+ * (~/platform/auth/ory/OryInvitePage).
  */
 export const INVITE_ACCEPT_PATH = "/auth/invite";
 
-/** Builds the shareable invite link for an invite token. */
+/**
+ * Builds the shareable invite link for an invite token. The
+ * `auth_provider=ory` parameter forces provider detection into the Ory
+ * branch for a fresh browser (the invitee has no session or stored
+ * preference yet).
+ */
 export function buildInviteLink(inviteToken: string): string {
-  return `${window.location.origin}${INVITE_ACCEPT_PATH}?token=${encodeURIComponent(
+  return `${window.location.origin}${INVITE_ACCEPT_PATH}?auth_provider=ory&token=${encodeURIComponent(
     inviteToken,
   )}`;
 }

@@ -114,7 +114,7 @@ describe("orgMembers", () => {
     it("builds a console-origin link with the URL-encoded token", () => {
       const link = buildInviteLink("token/with?chars");
       expect(link).toEqual(
-        `${window.location.origin}${INVITE_ACCEPT_PATH}?token=token%2Fwith%3Fchars`,
+        `${window.location.origin}${INVITE_ACCEPT_PATH}?auth_provider=ory&token=token%2Fwith%3Fchars`,
       );
     });
   });

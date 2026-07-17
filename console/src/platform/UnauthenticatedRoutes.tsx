@@ -32,6 +32,7 @@ import { Login } from "./auth/Login";
 import { OidcCallback } from "./auth/OidcCallback";
 import { OryAuthRoutes } from "./auth/ory/OryAuthRoutes";
 import { OryCallback } from "./auth/ory/OryCallback";
+import { OryInvitePage } from "./auth/ory/OryInvitePage";
 
 // Redirect already-signed-in users off the login page. The password session
 // cookie is httpOnly, so probe the server; a live OIDC token skips the probe.
@@ -137,9 +138,13 @@ const CloudOryRoutes = () => {
   const routerLocation = useLocation();
 
   // Check if we're on an Ory auth route (these don't require authentication)
-  // Also check /callback for OAuth2 redirect compatibility
+  // Also check /callback for OAuth2 redirect compatibility, and
+  // /auth/invite — the org-invite acceptance page (the invitee has no
+  // account yet; invite links carry ?auth_provider=ory so provider
+  // detection routes a fresh browser into this Ory branch).
   const isAuthRoute =
     routerLocation.pathname.startsWith("/auth/ory/") ||
+    routerLocation.pathname === "/auth/invite" ||
     routerLocation.pathname === "/callback";
 
   // Auth routes are always accessible
@@ -147,6 +152,7 @@ const CloudOryRoutes = () => {
     return (
       <SentryRoutes>
         <Route path="/auth/ory/*" element={<OryAuthRoutes />} />
+        <Route path="/auth/invite" element={<OryInvitePage />} />
         <Route path="/callback" element={<OryCallback />} />
       </SentryRoutes>
     );
