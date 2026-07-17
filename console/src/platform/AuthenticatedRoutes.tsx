@@ -19,6 +19,7 @@ import {
 
 import { AppPasswordRoutes } from "~/access/AppPasswordRoutes";
 import { LicenseRoutes } from "~/access/license/LicenseRoutes";
+import { MembersRoutes } from "~/access/MembersRoutes";
 import {
   hasInvoiceReadPermission,
   useMaybeCurrentOrganizationId,
@@ -149,6 +150,26 @@ export const AuthenticatedRoutes = () => {
                 !runtimeConfig.isImpersonating ? (
                   <BaseLayout>
                     <AppPasswordRoutes user={runtimeConfig.user} />
+                  </BaseLayout>
+                ) : (
+                  <RedirectToHome />
+                )
+              }
+              selfManagedConfigElement={<RedirectToHome />}
+            />
+          }
+        />
+        {/* Console-native members page. Only Ory-backed organizations use
+            it (MembersRoutes redirects Frontegg sessions home, since they
+            manage members in the embedded Frontegg AdminPortal). */}
+        <Route
+          path="/access/members/*"
+          element={
+            <AppConfigSwitch
+              cloudConfigElement={({ runtimeConfig }) =>
+                !runtimeConfig.isImpersonating ? (
+                  <BaseLayout>
+                    <MembersRoutes user={runtimeConfig.user} />
                   </BaseLayout>
                 ) : (
                   <RedirectToHome />

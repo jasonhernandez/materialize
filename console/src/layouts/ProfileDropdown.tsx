@@ -491,9 +491,17 @@ export const ProfileMenuItems = ({
   return (
     <VStack spacing={0} width="100%">
       {authProvider === "ory" ? (
-        <MenuItem fontWeight="medium" as={RouterLink} to="/auth/ory/settings">
-          Account settings
-        </MenuItem>
+        <>
+          <MenuItem fontWeight="medium" as={RouterLink} to="/auth/ory/settings">
+            Account settings
+          </MenuItem>
+          {/* Frontegg users manage members inside the AdminPortal (opened
+              by "Account settings"); Ory users use the console-native
+              members page. */}
+          <MenuItem fontWeight="medium" as={RouterLink} to="/access/members">
+            Members
+          </MenuItem>
+        </>
       ) : (
         <MenuItem fontWeight="medium" onClick={() => AdminPortal.show()}>
           Account settings
