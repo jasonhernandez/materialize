@@ -46,10 +46,8 @@ export const OryProviderWrapper = ({ children }: React.PropsWithChildren) => {
         if (existingUser && !existingUser.expired) {
           setUser(existingUser);
 
-          // Sync JWT to token storage for API client
-          if (existingUser.id_token) {
-            setOryAccessToken(existingUser.id_token);
-          }
+          // Sync the access token to token storage for the API client
+          setOryAccessToken(existingUser.access_token);
 
           // Enrich with the real Kratos session: the id_token carries only
           // standard OIDC claims, while whoami exposes the identity's
@@ -98,9 +96,7 @@ export const OryProviderWrapper = ({ children }: React.PropsWithChildren) => {
     const userManager = getOryUserManager();
     const onUserLoaded = (loadedUser: User) => {
       setUser(loadedUser);
-      if (loadedUser.id_token) {
-        setOryAccessToken(loadedUser.id_token);
-      }
+      setOryAccessToken(loadedUser.access_token);
       createOryFrontendApi()
         .toSession()
         .then((session) => setKratosSession(session as unknown as OrySession))

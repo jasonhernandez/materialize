@@ -22,7 +22,7 @@ import { getOryUserManager } from "~/auth/oryOidcConfig";
  * This component:
  * 1. Receives the authorization code from Ory via URL params
  * 2. Exchanges it for tokens via oidc-client-ts
- * 3. Stores the id_token (JWT) for API authentication
+ * 3. Stores the access token (JWT) for API authentication
  * 4. Redirects to the original destination
  */
 export const OryCallback = () => {
@@ -41,14 +41,10 @@ export const OryCallback = () => {
           throw new Error("No user returned from authentication");
         }
 
-        // Store the id_token (JWT) for API calls
-        // The id_token is what the backend validates, not the access_token
-        if (user.id_token) {
-          setOryAccessToken(user.id_token);
-        } else {
-          console.warn("No id_token in OAuth2 response, using access_token");
-          setOryAccessToken(user.access_token);
-        }
+        // Store the audience-scoped access token for API calls; the
+        // backend rejects ID tokens (they are addressed to this client,
+        // not the API).
+        setOryAccessToken(user.access_token);
 
         // Persist that user authenticated with Ory for sticky routing,
         // plus their email so future visits can run email-first discovery

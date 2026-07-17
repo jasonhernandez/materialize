@@ -51,14 +51,22 @@ export function createOryUserManager(): UserManager {
     // Authorization Code flow (PKCE is automatic for public clients)
     response_type: "code",
 
-    // Scopes to request
-    scope: "openid email profile",
+    // Scopes to request. offline_access yields a rotating refresh token,
+    // which pairs with the short access-token TTL as the revocation story.
+    scope: "openid email profile offline_access",
+
+    // Audience for the cloud API: Hydra stamps it into access tokens and
+    // the API rejects tokens without it (ID tokens are not API
+    // credentials — their audience is this client's id).
+    extraQueryParams: {
+      audience: appConfig.cloudGlobalApiUrl,
+    },
 
     // Store tokens in sessionStorage (cleared on tab close)
     userStore: new WebStorageStateStore({ store: sessionStorage }),
 
-    // Disable automatic token refresh for POC
-    automaticSilentRenew: false,
+    // Renew via the refresh token before the access token expires.
+    automaticSilentRenew: true,
 
     // Skip userinfo endpoint (we get claims from id_token)
     loadUserInfo: false,
