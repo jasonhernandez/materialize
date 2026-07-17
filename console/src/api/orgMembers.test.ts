@@ -28,16 +28,9 @@ import {
 
 describe("orgMembers", () => {
   describe("listOrganizationMembers", () => {
-    it("parses a bare-array response", async () => {
+    it("parses the members response", async () => {
       const member = buildMember();
       server.use(buildMembersResponse({ members: [member] }));
-      const { data } = await listOrganizationMembers();
-      expect(data).toEqual([member]);
-    });
-
-    it("parses a Paginated response", async () => {
-      const member = buildMember({ email: "someone@example.com" });
-      server.use(buildMembersResponse({ members: [member], paginated: true }));
       const { data } = await listOrganizationMembers();
       expect(data).toEqual([member]);
     });

@@ -54,7 +54,9 @@ export interface paths {
         /**
          * `POST /api/auth/discovery`: report which auth provider serves the given
          *     email. Defaults to Frontegg whenever Ory is not configured, the email is
-         *     malformed, or the flag is off/unavailable.
+         *     malformed, or the flag is off/unavailable — unless the stack sets
+         *     `--ory-auth-default-enabled`, which flips the absent-flag fallback to
+         *     Ory (personal stacks; a real LaunchDarkly flag always wins).
          */
         post: operations["discover_auth_provider"];
         delete?: never;
@@ -147,6 +149,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/invites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Invite a user to the calling admin's organization */
+        post: operations["create_organization_invite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/invoices": {
         parameters: {
             query?: never;
@@ -198,6 +217,41 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the members of the calling user's organization */
+        get: operations["list_organization_members"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/members/{identity_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a member from the calling admin's organization */
+        delete: operations["remove_organization_member"];
+        options?: never;
+        head?: never;
+        /** Change a member's role in the calling admin's organization */
+        patch: operations["update_organization_member_role"];
         trace?: never;
     };
     "/api/organization": {
@@ -513,6 +567,24 @@ export interface components {
             environmentId?: string | null;
             licenseKey?: string | null;
         };
+        CreateInviteRequest: {
+            /** @description Email address of the user to invite. */
+            email: string;
+            /** @description The role the invitee will hold. */
+            role: components["schemas"]["OrgRole"];
+        };
+        CreateInviteResponse: {
+            /**
+             * @description The raw invite token. Returned exactly once; the server stores only
+             *     its hash.
+             */
+            inviteToken: string;
+            /**
+             * Format: date-time
+             * @description When the invitation expires.
+             */
+            expiresAt: string;
+        };
         CreateLicenseKeyRequest: {
             /** Format: uuid */
             environmentId?: string | null;
@@ -631,6 +703,31 @@ export interface components {
             unitAmount: string;
             /** @description The total cost for the resource type in the region, excluding any minimums and discounts. */
             subtotal: string;
+        };
+        /**
+         * @description Role of an organization member. `Admin` corresponds to the
+         *     `MaterializePlatformAdmin` role the token hook stamps into tokens; the
+         *     membership row is the source the token hook derives `metadata_admin`
+         *     from (see `crate::ory::roles`), with identity metadata as fallback.
+         * @enum {string}
+         */
+        OrgRole: "admin" | "member";
+        /** @description A member of the calling user's organization. */
+        OrganizationMember: {
+            /**
+             * Format: uuid
+             * @description The member's identity id.
+             */
+            id: string;
+            /** @description The member's email address. */
+            email: string;
+            /** @description The member's role in the organization. */
+            role: components["schemas"]["OrgRole"];
+            /**
+             * Format: date-time
+             * @description When the member joined the organization.
+             */
+            joinedAt: string;
         };
         OrganizationResponse: {
             /**
@@ -796,6 +893,10 @@ export interface components {
             type: components["schemas"]["PlanType"];
             /** @description The marketplace the organization is billed through. */
             marketplace: components["schemas"]["Marketplace"];
+        };
+        UpdateMemberRoleRequest: {
+            /** @description The member's new role. */
+            role: components["schemas"]["OrgRole"];
         };
     };
     responses: never;
@@ -1077,6 +1178,44 @@ export interface operations {
             };
         };
     };
+    create_organization_invite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateInviteRequest"];
+            };
+        };
+        responses: {
+            /** @description The created invitation; the token is only returned once */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateInviteResponse"];
+                };
+            };
+            /** @description Invalid email address */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The invitee is already a member, or members for this organization are managed by Frontegg */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     get_invoices: {
         parameters: {
             query?: {
@@ -1180,6 +1319,114 @@ export interface operations {
             };
             /** @description Failed to list revoked license keys */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_organization_members: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The organization's members */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationMember"][];
+                };
+            };
+            /** @description Members for this organization are managed by Frontegg */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    remove_organization_member: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The member's identity id */
+                identity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The member was removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admins cannot remove themselves */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No such member */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Members for this organization are managed by Frontegg */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    update_organization_member_role: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The member's identity id */
+                identity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateMemberRoleRequest"];
+            };
+        };
+        responses: {
+            /** @description The member's role was updated */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No such member */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Members for this organization are managed by Frontegg */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

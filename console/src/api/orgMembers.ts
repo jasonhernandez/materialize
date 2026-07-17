@@ -13,37 +13,23 @@
  * Frontegg-backed organizations manage members through the embedded
  * Frontegg AdminPortal; Ory-backed organizations manage them through the
  * cloud global API. See cloud/doc/design/20260710_ory_auth_migration.md.
- *
- * These endpoints are not yet part of the generated OpenAPI schema
- * (~/api/schemas/global-api), so this module issues requests directly
- * through the cloud API fetch (which attaches the session's bearer token)
- * rather than through the typed openapi-fetch client.
- * TODO(ory-migration): move to the generated client once the endpoints
- * land in the global-api OpenAPI spec.
  */
+
+import createClient from "openapi-fetch";
 
 import { NOT_SUPPORTED_MESSAGE } from "~/config/AppConfig";
 
 import { apiClient } from "./apiClient";
-import { OpenApiFetchError } from "./OpenApiFetchError";
+import {
+  handleOpenApiResponse,
+  handleOpenApiResponseWithBody,
+} from "./openApiUtils";
+import { components, paths } from "./schemas/global-api";
 import { OpenApiRequestOptions } from "./types";
 
-export type OrganizationMemberRole = "admin" | "member";
-
-export interface OrganizationMember {
-  /** Ory identity UUID. */
-  id: string;
-  email: string;
-  role: OrganizationMemberRole;
-  /** ISO 8601 datetime. */
-  joinedAt: string;
-}
-
-export interface OrganizationInvite {
-  inviteToken: string;
-  /** ISO 8601 datetime. */
-  expiresAt: string;
-}
+export type OrganizationMemberRole = components["schemas"]["OrgRole"];
+export type OrganizationMember = components["schemas"]["OrganizationMember"];
+export type OrganizationInvite = components["schemas"]["CreateInviteResponse"];
 
 /**
  * Console route that will accept an invite token.
@@ -62,61 +48,20 @@ export function buildInviteLink(inviteToken: string): string {
   )}`;
 }
 
-function getCloudApiClient() {
-  if (apiClient.type !== "cloud") {
+const client =
+  apiClient.type === "cloud"
+    ? createClient<paths>({
+        baseUrl: apiClient.cloudGlobalApiBasePath,
+        fetch: apiClient.cloudApiFetch,
+      })
+    : null;
+
+const getClient = () => {
+  if (client === null) {
     throw new Error(NOT_SUPPORTED_MESSAGE);
   }
-  return apiClient;
-}
-
-async function cloudApiRequest(
-  path: string,
-  init: RequestInit,
-  requestOptions: OpenApiRequestOptions = {},
-): Promise<{ response: Response; body: unknown }> {
-  const client = getCloudApiClient();
-  const response = await client.cloudApiFetch(
-    `${client.cloudGlobalApiBasePath}${path}`,
-    {
-      ...requestOptions,
-      ...init,
-    },
-  );
-  let body: unknown;
-  const text = await response.text();
-  if (text.length > 0) {
-    try {
-      body = JSON.parse(text);
-    } catch {
-      body = text;
-    }
-  }
-  if (!response.ok) {
-    throw new OpenApiFetchError(
-      response.status,
-      (body as string | object) ?? "Empty response",
-    );
-  }
-  return { response, body };
-}
-
-/**
- * The members list may arrive either as a bare array or wrapped in the
- * suite's standard `Paginated` shape (`{ data: [...] }`); tolerate both.
- */
-function parseMembersPayload(payload: unknown): OrganizationMember[] {
-  if (Array.isArray(payload)) {
-    return payload as OrganizationMember[];
-  }
-  if (
-    payload !== null &&
-    typeof payload === "object" &&
-    Array.isArray((payload as { data?: unknown }).data)
-  ) {
-    return (payload as { data: OrganizationMember[] }).data;
-  }
-  throw new OpenApiFetchError(200, "Unexpected members response shape");
-}
+  return client;
+};
 
 /**
  * Lists the members of the calling user's organization. Any member may
@@ -125,12 +70,13 @@ function parseMembersPayload(payload: unknown): OrganizationMember[] {
 export async function listOrganizationMembers(
   requestOptions: OpenApiRequestOptions = {},
 ) {
-  const { body } = await cloudApiRequest(
-    "/api/members",
-    { method: "GET" },
-    requestOptions,
-  );
-  return { data: parseMembersPayload(body) };
+  const { headers, ...options } = requestOptions;
+  const { data, response } = await getClient().GET("/api/members", {
+    signal: requestOptions?.signal,
+    headers,
+    ...options,
+  });
+  return handleOpenApiResponseWithBody(data, response);
 }
 
 /**
@@ -142,16 +88,17 @@ export async function inviteOrganizationMember(
   { email, role }: { email: string; role: OrganizationMemberRole },
   requestOptions: OpenApiRequestOptions = {},
 ) {
-  const { body } = await cloudApiRequest(
-    "/api/invites",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, role }),
+  const { headers, ...options } = requestOptions;
+  const { data, response } = await getClient().POST("/api/invites", {
+    signal: requestOptions?.signal,
+    headers,
+    body: {
+      email,
+      role,
     },
-    requestOptions,
-  );
-  return { data: body as OrganizationInvite };
+    ...options,
+  });
+  return handleOpenApiResponseWithBody(data, response);
 }
 
 /**
@@ -162,11 +109,21 @@ export async function removeOrganizationMember(
   memberId: string,
   requestOptions: OpenApiRequestOptions = {},
 ) {
-  await cloudApiRequest(
-    `/api/members/${encodeURIComponent(memberId)}`,
-    { method: "DELETE" },
-    requestOptions,
+  const { headers, ...options } = requestOptions;
+  const { data, response } = await getClient().DELETE(
+    "/api/members/{identity_id}",
+    {
+      params: {
+        path: {
+          identity_id: memberId,
+        },
+      },
+      signal: requestOptions?.signal,
+      headers,
+      ...options,
+    },
   );
+  return handleOpenApiResponse(data, response);
 }
 
 /** Changes a member's role. Admin only. */
@@ -175,13 +132,22 @@ export async function setOrganizationMemberRole(
   role: OrganizationMemberRole,
   requestOptions: OpenApiRequestOptions = {},
 ) {
-  await cloudApiRequest(
-    `/api/members/${encodeURIComponent(memberId)}`,
+  const { headers, ...options } = requestOptions;
+  const { data, response } = await getClient().PATCH(
+    "/api/members/{identity_id}",
     {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ role }),
+      params: {
+        path: {
+          identity_id: memberId,
+        },
+      },
+      signal: requestOptions?.signal,
+      headers,
+      body: {
+        role,
+      },
+      ...options,
     },
-    requestOptions,
   );
+  return handleOpenApiResponse(data, response);
 }

@@ -24,15 +24,12 @@ export const buildMember = (
 export const buildMembersResponse = (
   options: {
     members?: OrganizationMember[];
-    /** Wrap the list in the suite's standard Paginated shape. */
-    paginated?: boolean;
     status?: number;
   } = {},
 ) =>
   http.get("*/api/members", () => {
     const members = options.members ?? [buildMember()];
-    const payload = options.paginated ? { data: members } : members;
-    return HttpResponse.json(payload, { status: options.status ?? 200 });
+    return HttpResponse.json(members, { status: options.status ?? 200 });
   });
 
 export const buildInviteResponse = (
