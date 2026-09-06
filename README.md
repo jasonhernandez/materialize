@@ -154,3 +154,5 @@ for additional guidance.
 ## Credits
 
 Materialize is lovingly crafted by [a team of developers](https://github.com/MaterializeInc/materialize/graphs/contributors) and one bot. [Join us](https://materialize.com/careers/).
+
+<!-- BoxLite spike E6 placeholder probe; this branch will be deleted. -->
