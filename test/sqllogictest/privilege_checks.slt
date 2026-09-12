@@ -260,6 +260,24 @@ ALTER CONNECTION ssh_route SET (HOST 'redirected.invalid') WITH (VALIDATE = fals
 db error: ERROR: permission denied for SECRET "materialize.public.ssh_route_password"
 DETAIL: The 'joe' role needs USAGE privileges on SECRET "materialize.public.ssh_route_password"
 
+# Altering a connection does not require USAGE on secrets reached only through
+# the connections it references. `USAGE` on a fixed connection delegates those.
+
+simple conn=mz_system,user=mz_system
+ALTER CONNECTION ssh_route_kafka OWNER TO joe;
+----
+COMPLETE 0
+
+simple conn=mz_system,user=mz_system
+GRANT USAGE ON CONNECTION ssh_route_aws TO joe;
+----
+COMPLETE 0
+
+simple conn=joe,user=joe
+ALTER CONNECTION ssh_route_kafka SET (BROKER 'broker2:9092' USING SSH TUNNEL ssh_route) WITH (VALIDATE = false);
+----
+COMPLETE 0
+
 simple conn=mz_system,user=mz_system
 DROP CONNECTION ssh_route_kafka;
 ----
